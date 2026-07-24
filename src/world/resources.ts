@@ -13,7 +13,7 @@ export interface ResourceNode {
 
 const GATHER_RANGE = 2.5;
 const RESPAWN_SECONDS = 20;
-const NODE_COUNT_PER_TYPE = 40;
+const NODE_COUNT_PER_TYPE = 140;
 const PLACEMENT_SEED = 9001;
 
 function mulberry32(seed: number) {
@@ -96,7 +96,7 @@ export class ResourceManager {
         const x = (rng() - 0.5) * WORLD_SIZE * 0.9;
         const z = (rng() - 0.5) * WORLD_SIZE * 0.9;
         const distFromSpawn = Math.sqrt(x * x + z * z);
-        if (distFromSpawn < 12) continue; // keep spawn clear
+        if (distFromSpawn < 8) continue; // keep spawn clear
 
         const y = heightAt(x, z);
         const slope =

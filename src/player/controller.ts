@@ -2,11 +2,11 @@ import * as THREE from "three";
 import { heightAt } from "../world/terrain";
 import { createPlayerModel } from "./model";
 
-const MOVE_SPEED = 6; // units/sec
+const MOVE_SPEED = 11; // units/sec
 const JUMP_SPEED = 5.5;
 const GRAVITY = 14;
-const CAMERA_DISTANCE = 7;
-const CAMERA_MIN_PITCH = 0.15;
+const CAMERA_DISTANCE = 16;
+const CAMERA_MIN_PITCH = 0.3;
 const CAMERA_MAX_PITCH = 1.3;
 
 export class PlayerController {
@@ -17,14 +17,18 @@ export class PlayerController {
 
   private keys = new Set<string>();
   private cameraYaw = Math.PI;
-  private cameraPitch = 0.3;
+  private cameraPitch = 0.5;
   private dragging = false;
   private lastPointer = { x: 0, y: 0 };
 
   private verticalVelocity = 0;
   private grounded = true;
 
-  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, scene: THREE.Scene) {
+  constructor(
+    camera: THREE.PerspectiveCamera,
+    domElement: HTMLElement,
+    scene: THREE.Scene,
+  ) {
     this.camera = camera;
     this.model = createPlayerModel();
     scene.add(this.model);
@@ -69,7 +73,8 @@ export class PlayerController {
       0,
       -Math.cos(this.cameraYaw),
     );
-    const right = new THREE.Vector3(forward.z, 0, -forward.x);
+    // Right = cross(forward, up), so D strafes to the character's right.
+    const right = new THREE.Vector3(-forward.z, 0, forward.x);
 
     const move = new THREE.Vector3();
     if (this.keys.has("KeyW")) move.add(forward);

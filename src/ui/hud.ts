@@ -22,7 +22,7 @@ export class Hud {
     root.innerHTML = `
       <div class="inventory"></div>
       <div class="prompt" hidden></div>
-      <div class="hint">WASD move · drag to look · space jump · E gather · C craft</div>
+      <div class="hint">WASD move · drag to look · space jump · E gather · C craft · T torch · F campfire</div>
       <div class="craft-menu" hidden></div>
     `;
     this.inventoryEl = root.querySelector(".inventory")!;
@@ -68,11 +68,14 @@ export class Hud {
       const costText = Object.entries(recipe.cost)
         .map(([type, amt]) => `${amt} ${RESOURCE_LABEL[type as ResourceType]}`)
         .join(", ");
+      const owned = this.crafting.countOf(recipe.id);
+      const maxedOut = recipe.maxOwned !== undefined && owned >= recipe.maxOwned;
       const canCraft = this.crafting.canCraft(recipe);
+      const buttonLabel = maxedOut ? "Owned" : `Craft (${owned})`;
       return `
         <div class="recipe">
-          <span>${recipe.name}<br><small>${costText}</small></span>
-          <button data-id="${recipe.id}" ${canCraft ? "" : "disabled"}>Craft (${this.crafting.countOf(recipe.id)})</button>
+          <span>${recipe.name}<br><small>${recipe.description}</small><br><small>${costText}</small></span>
+          <button data-id="${recipe.id}" ${canCraft ? "" : "disabled"}>${buttonLabel}</button>
         </div>
       `;
     }).join("");

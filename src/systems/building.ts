@@ -67,6 +67,10 @@ export class BuildManager {
     return this.built[id] ?? 0;
   }
 
+  totalBuilt(): number {
+    return Object.values(this.built).reduce((sum, n) => sum + n, 0);
+  }
+
   canBuild(building: BuildingDef): boolean {
     if (building.requiresTownCenter && this.countBuilt("town_center") === 0) {
       return false;

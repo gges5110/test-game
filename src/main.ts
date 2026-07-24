@@ -1,9 +1,10 @@
 import * as THREE from "three";
-import { createTerrain, heightAt } from "./world/terrain";
+import { createTerrain, heightAt, WORLD_SIZE } from "./world/terrain";
 import { ResourceManager } from "./world/resources";
 import { createCampfire } from "./world/props";
 import { createBuildingMesh, makeGhost } from "./world/buildings";
 import { Villager } from "./world/villager";
+import { Wolf } from "./world/enemy";
 import { PlayerController } from "./player/controller";
 import { Inventory } from "./systems/inventory";
 import { Crafting } from "./systems/crafting";
@@ -35,6 +36,8 @@ window.addEventListener("resize", () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+const clock = new THREE.Clock();
 
 const terrain = createTerrain();
 scene.add(terrain);
@@ -72,11 +75,44 @@ const villagers: Villager[] = [];
 const FARM_INTERVAL = 8;
 const farms: { timer: number }[] = [];
 
+// Wolves: wandering threats that chase and attack the player on contact.
+const WOLF_COUNT = 7;
+const wolves: Wolf[] = [];
+for (let i = 0; i < WOLF_COUNT; i++) {
+  const angle = (i / WOLF_COUNT) * Math.PI * 2 + Math.random();
+  const dist = 25 + Math.random() * (WORLD_SIZE * 0.3);
+  const x = Math.cos(angle) * dist;
+  const z = Math.sin(angle) * dist;
+  wolves.push(new Wolf(scene, new THREE.Vector3(x, heightAt(x, z), z)));
+}
+
+const PLAYER_MAX_HEALTH = 100;
+const ATTACK_RANGE = 2;
+const ATTACK_DAMAGE = 15;
+const REGEN_DELAY = 5;
+const REGEN_RATE = 4; // per second
+let playerHealth = PLAYER_MAX_HEALTH;
+let lastDamageAt = -Infinity;
+
+function respawnPlayer() {
+  playerHealth = PLAYER_MAX_HEALTH;
+  player.position.set(0, heightAt(0, 0), 0);
+}
+
 // Building placement: pick a building in the build menu, a translucent
-// ghost follows the player, Enter confirms and Escape cancels.
+// ghost follows the player, Enter confirms and Escape cancels. Buildings
+// can't be placed too close to each other.
 let selectedBuilding: BuildingDef | null = null;
 let ghost: THREE.Group | null = null;
 const PLACEMENT_DISTANCE = 5;
+const MIN_BUILDING_SPACING = 3;
+const placedBuildingPositions: THREE.Vector3[] = [];
+
+function canPlaceAt(position: THREE.Vector3): boolean {
+  return placedBuildingPositions.every(
+    (p) => p.distanceTo(position) >= MIN_BUILDING_SPACING,
+  );
+}
 
 hud.setOnSelectBuilding((building) => {
   if (ghost) scene.remove(ghost);
@@ -93,12 +129,14 @@ function cancelPlacement() {
 
 function confirmPlacement() {
   if (!selectedBuilding || !ghost) return;
+  if (!canPlaceAt(ghost.position)) return;
   if (!buildManager.build(selectedBuilding)) return;
 
   const building = createBuildingMesh(selectedBuilding.id);
   building.position.copy(ghost.position);
   building.rotation.y = ghost.rotation.y;
   scene.add(building);
+  placedBuildingPositions.push(building.position.clone());
 
   if (selectedBuilding.id === "house") {
     villagers.push(new Villager(scene, building.position, resources, inventory));
@@ -113,6 +151,13 @@ function confirmPlacement() {
 
 window.addEventListener("keydown", (e) => {
   if (e.code === "KeyE") {
+    const wolf = wolves.find(
+      (w) => w.alive && w.model.position.distanceTo(player.position) <= ATTACK_RANGE,
+    );
+    if (wolf) {
+      wolf.takeDamage(ATTACK_DAMAGE, clock.getElapsedTime());
+      return;
+    }
     const node = resources.findGatherable(player.position);
     if (node) {
       const type = resources.gather(node);
@@ -134,8 +179,6 @@ window.addEventListener("keydown", (e) => {
     cancelPlacement();
   }
 });
-
-const clock = new THREE.Clock();
 
 function animate() {
   const delta = Math.min(clock.getDelta(), 0.1);
@@ -162,6 +205,19 @@ function animate() {
     }
   }
 
+  for (const wolf of wolves) {
+    wolf.update(delta, time, player.position, (amount) => {
+      playerHealth = Math.max(0, playerHealth - amount);
+      lastDamageAt = time;
+      if (playerHealth <= 0) respawnPlayer();
+    });
+  }
+  if (time - lastDamageAt > REGEN_DELAY) {
+    playerHealth = Math.min(PLAYER_MAX_HEALTH, playerHealth + REGEN_RATE * delta);
+  }
+  hud.setHealth(playerHealth, PLAYER_MAX_HEALTH);
+  hud.setTownStats(villagers.length, buildManager.totalBuilt());
+
   if (selectedBuilding && ghost) {
     const facing = player.model.rotation.y;
     const x = player.position.x + Math.sin(facing) * PLACEMENT_DISTANCE;
@@ -170,12 +226,22 @@ function animate() {
     ghost.rotation.y = facing;
   }
 
-  const placementPrompt = selectedBuilding
-    ? `Enter to place ${selectedBuilding.name} · Esc to cancel`
-    : null;
+  let placementPrompt: string | null = null;
+  if (selectedBuilding && ghost) {
+    placementPrompt = canPlaceAt(ghost.position)
+      ? `Enter to place ${selectedBuilding.name} · Esc to cancel`
+      : `Too close to another building · Esc to cancel`;
+  }
+  const nearWolf = wolves.find(
+    (w) => w.alive && w.model.position.distanceTo(player.position) <= ATTACK_RANGE,
+  );
   const nearest = resources.findGatherable(player.position);
-  const gatherPrompt = nearest ? `Press E to gather ${nearest.type}` : null;
-  hud.setPrompt(placementPrompt ?? gatherPrompt);
+  const actionPrompt = nearWolf
+    ? "Press E to attack"
+    : nearest
+      ? `Press E to gather ${nearest.type}`
+      : null;
+  hud.setPrompt(placementPrompt ?? actionPrompt);
 
   renderer.render(scene, camera);
   requestAnimationFrame(animate);

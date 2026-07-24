@@ -12,6 +12,8 @@ const RESOURCE_LABEL: Record<ResourceType, string> = {
 
 export class Hud {
   private inventoryEl: HTMLElement;
+  private healthFillEl: HTMLElement;
+  private townStatsEl: HTMLElement;
   private promptEl: HTMLElement;
   private craftMenuEl: HTMLElement;
   private buildMenuEl: HTMLElement;
@@ -27,12 +29,16 @@ export class Hud {
   ) {
     root.innerHTML = `
       <div class="inventory"></div>
+      <div class="healthbar"><div class="fill" style="width:100%"></div></div>
+      <div class="townstats"></div>
       <div class="prompt" hidden></div>
-      <div class="hint">WASD move · drag to look · space jump · E gather · C craft · B build · T torch · F campfire</div>
+      <div class="hint">WASD move · drag to look · space jump · E gather/attack · C craft · B build · T torch · F campfire</div>
       <div class="craft-menu" hidden></div>
       <div class="craft-menu" id="buildMenu" hidden></div>
     `;
     this.inventoryEl = root.querySelector(".inventory")!;
+    this.healthFillEl = root.querySelector(".healthbar .fill")!;
+    this.townStatsEl = root.querySelector(".townstats")!;
     this.promptEl = root.querySelector(".prompt")!;
     this.craftMenuEl = root.querySelector(".craft-menu")!;
     this.buildMenuEl = root.querySelector("#buildMenu")!;
@@ -67,6 +73,15 @@ export class Hud {
           `<div class="slot">${RESOURCE_LABEL[type]}: ${this.inventory.get(type)}/${this.inventory.capacity}</div>`,
       )
       .join("");
+  }
+
+  setHealth(current: number, max: number) {
+    const pct = Math.max(0, Math.min(100, (current / max) * 100));
+    this.healthFillEl.style.width = `${pct}%`;
+  }
+
+  setTownStats(population: number, buildingCount: number) {
+    this.townStatsEl.innerHTML = `👥 ${population}<br><small>🏘️ ${buildingCount} buildings</small>`;
   }
 
   setPrompt(text: string | null) {

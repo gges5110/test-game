@@ -1,10 +1,13 @@
 import * as THREE from "three";
-import { createTerrain } from "./world/terrain";
+import { createTerrain, heightAt } from "./world/terrain";
 import { ResourceManager } from "./world/resources";
 import { createCampfire } from "./world/props";
+import { createBuildingMesh, makeGhost } from "./world/buildings";
+import { Villager } from "./world/villager";
 import { PlayerController } from "./player/controller";
 import { Inventory } from "./systems/inventory";
 import { Crafting } from "./systems/crafting";
+import { BuildManager, type BuildingDef } from "./systems/building";
 import { createLighting } from "./systems/lighting";
 import { Hud } from "./ui/hud";
 
@@ -42,13 +45,14 @@ const player = new PlayerController(camera, canvas, scene);
 
 const inventory = new Inventory();
 const crafting = new Crafting(inventory);
-const hud = new Hud(hudRoot, inventory, crafting);
+const buildManager = new BuildManager(inventory);
+const hud = new Hud(hudRoot, inventory, crafting, buildManager);
 
-// Starting kit so new players can try torches/campfires immediately.
+// Starting kit so new players can try crafting/building immediately.
 crafting.grant("torch", 1);
 crafting.grant("campfire", 1);
-inventory.add("wood", 3);
-inventory.add("stone", 2);
+inventory.add("wood", 8);
+inventory.add("stone", 4);
 inventory.add("fiber", 1);
 
 // Torch: press T to toggle a light attached to the player, if owned.
@@ -59,6 +63,47 @@ player.model.add(torchLight);
 
 // Campfires placed in the world (press F), animated with a flicker.
 const campfires: ReturnType<typeof createCampfire>[] = [];
+
+// Villagers spawned by Houses, wandering nearby.
+const villagers: Villager[] = [];
+
+// Building placement: pick a building in the build menu, a translucent
+// ghost follows the player, Enter confirms and Escape cancels.
+let selectedBuilding: BuildingDef | null = null;
+let ghost: THREE.Group | null = null;
+const PLACEMENT_DISTANCE = 5;
+
+hud.setOnSelectBuilding((building) => {
+  if (ghost) scene.remove(ghost);
+  selectedBuilding = building;
+  ghost = makeGhost(createBuildingMesh(building.id));
+  scene.add(ghost);
+});
+
+function cancelPlacement() {
+  if (ghost) scene.remove(ghost);
+  ghost = null;
+  selectedBuilding = null;
+}
+
+function confirmPlacement() {
+  if (!selectedBuilding || !ghost) return;
+  if (!buildManager.canAfford(selectedBuilding)) return;
+
+  buildManager.pay(selectedBuilding);
+  const building = createBuildingMesh(selectedBuilding.id);
+  building.position.copy(ghost.position);
+  building.rotation.y = ghost.rotation.y;
+  scene.add(building);
+
+  if (selectedBuilding.id === "house") {
+    villagers.push(new Villager(scene, building.position));
+  } else if (selectedBuilding.id === "storage") {
+    inventory.addCapacity(20);
+  }
+
+  cancelPlacement();
+}
 
 window.addEventListener("keydown", (e) => {
   if (e.code === "KeyE") {
@@ -77,6 +122,10 @@ window.addEventListener("keydown", (e) => {
     fire.group.position.copy(player.position);
     scene.add(fire.group);
     campfires.push(fire);
+  } else if (e.code === "Enter") {
+    confirmPlacement();
+  } else if (e.code === "Escape") {
+    cancelPlacement();
   }
 });
 
@@ -95,8 +144,24 @@ function animate() {
     fire.flame.scale.setScalar(0.9 + Math.sin(time * 17) * 0.08);
   }
 
+  for (const villager of villagers) {
+    villager.update(delta, time);
+  }
+
+  if (selectedBuilding && ghost) {
+    const facing = player.model.rotation.y;
+    const x = player.position.x + Math.sin(facing) * PLACEMENT_DISTANCE;
+    const z = player.position.z + Math.cos(facing) * PLACEMENT_DISTANCE;
+    ghost.position.set(x, heightAt(x, z), z);
+    ghost.rotation.y = facing;
+  }
+
+  const placementPrompt = selectedBuilding
+    ? `Enter to place ${selectedBuilding.name} · Esc to cancel`
+    : null;
   const nearest = resources.findGatherable(player.position);
-  hud.setPrompt(nearest ? `Press E to gather ${nearest.type}` : null);
+  const gatherPrompt = nearest ? `Press E to gather ${nearest.type}` : null;
+  hud.setPrompt(placementPrompt ?? gatherPrompt);
 
   renderer.render(scene, camera);
   requestAnimationFrame(animate);

@@ -7,6 +7,7 @@ const RESOURCE_LABEL: Record<ResourceType, string> = {
   wood: "🪵 Wood",
   stone: "🪨 Stone",
   fiber: "🌿 Fiber",
+  food: "🍞 Food",
 };
 
 export class Hud {
@@ -123,11 +124,20 @@ export class Hud {
       const costText = Object.entries(building.cost)
         .map(([type, amt]) => `${amt} ${RESOURCE_LABEL[type as ResourceType]}`)
         .join(", ");
-      const canAfford = this.buildManager.canAfford(building);
+      const owned = this.buildManager.countBuilt(building.id);
+      const maxedOut = building.maxBuilt !== undefined && owned >= building.maxBuilt;
+      const townCenterMissing =
+        building.requiresTownCenter && this.buildManager.countBuilt("town_center") === 0;
+      const canBuild = this.buildManager.canBuild(building);
+
+      let buttonLabel = "Place";
+      if (maxedOut) buttonLabel = "Built";
+      else if (townCenterMissing) buttonLabel = "Need Town Center";
+
       return `
         <div class="recipe">
           <span>${building.name}<br><small>${building.description}</small><br><small>${costText}</small></span>
-          <button data-id="${building.id}" ${canAfford ? "" : "disabled"}>Place</button>
+          <button data-id="${building.id}" ${canBuild ? "" : "disabled"}>${buttonLabel}</button>
         </div>
       `;
     }).join("");

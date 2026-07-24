@@ -9,6 +9,7 @@ export class Inventory {
     wood: 0,
     stone: 0,
     fiber: 0,
+    food: 0,
   };
   private capacityBonus = 0;
   private listeners: Listener[] = [];

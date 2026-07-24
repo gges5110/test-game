@@ -44,16 +44,16 @@ const resources = new ResourceManager(scene);
 const player = new PlayerController(camera, canvas, scene);
 
 const inventory = new Inventory();
-const crafting = new Crafting(inventory);
 const buildManager = new BuildManager(inventory);
+const crafting = new Crafting(inventory, buildManager);
 const hud = new Hud(hudRoot, inventory, crafting, buildManager);
 
 // Starting kit so new players can try crafting/building immediately.
 crafting.grant("torch", 1);
 crafting.grant("campfire", 1);
-inventory.add("wood", 8);
-inventory.add("stone", 4);
-inventory.add("fiber", 1);
+inventory.add("wood", 12);
+inventory.add("stone", 8);
+inventory.add("fiber", 3);
 
 // Torch: press T to toggle a light attached to the player, if owned.
 let torchOn = false;
@@ -64,8 +64,13 @@ player.model.add(torchLight);
 // Campfires placed in the world (press F), animated with a flicker.
 const campfires: ReturnType<typeof createCampfire>[] = [];
 
-// Villagers spawned by Houses, wandering nearby.
+// Villagers spawned by Houses: they seek nearby resources, gather, and
+// haul them home to the shared inventory; idle otherwise wandering nearby.
 const villagers: Villager[] = [];
+
+// Farms tick out food passively over time.
+const FARM_INTERVAL = 8;
+const farms: { timer: number }[] = [];
 
 // Building placement: pick a building in the build menu, a translucent
 // ghost follows the player, Enter confirms and Escape cancels.
@@ -88,18 +93,19 @@ function cancelPlacement() {
 
 function confirmPlacement() {
   if (!selectedBuilding || !ghost) return;
-  if (!buildManager.canAfford(selectedBuilding)) return;
+  if (!buildManager.build(selectedBuilding)) return;
 
-  buildManager.pay(selectedBuilding);
   const building = createBuildingMesh(selectedBuilding.id);
   building.position.copy(ghost.position);
   building.rotation.y = ghost.rotation.y;
   scene.add(building);
 
   if (selectedBuilding.id === "house") {
-    villagers.push(new Villager(scene, building.position));
+    villagers.push(new Villager(scene, building.position, resources, inventory));
   } else if (selectedBuilding.id === "storage") {
     inventory.addCapacity(20);
+  } else if (selectedBuilding.id === "farm") {
+    farms.push({ timer: 0 });
   }
 
   cancelPlacement();
@@ -146,6 +152,14 @@ function animate() {
 
   for (const villager of villagers) {
     villager.update(delta, time);
+  }
+
+  for (const farm of farms) {
+    farm.timer += delta;
+    if (farm.timer >= FARM_INTERVAL) {
+      farm.timer -= FARM_INTERVAL;
+      inventory.add("food", 1);
+    }
   }
 
   if (selectedBuilding && ghost) {

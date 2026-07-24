@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { heightAt, WORLD_SIZE } from "./terrain";
 
-export type ResourceType = "wood" | "stone" | "fiber";
+export type ResourceType = "wood" | "stone" | "fiber" | "food";
 
 export interface ResourceNode {
   type: ResourceType;
@@ -9,6 +9,8 @@ export interface ResourceNode {
   mesh: THREE.Object3D;
   depleted: boolean;
   respawnAt: number;
+  /** Claimed by a villager en route, so others don't also target it. */
+  reserved: boolean;
 }
 
 const GATHER_RANGE = 2.5;
@@ -113,6 +115,7 @@ export class ResourceManager {
           mesh,
           depleted: false,
           respawnAt: 0,
+          reserved: false,
         });
         placed++;
       }
@@ -133,8 +136,32 @@ export class ResourceManager {
     return nearest;
   }
 
+  /** Nearest non-depleted, unreserved node within range of a point (e.g. a villager's home). */
+  findNearestAvailable(from: THREE.Vector3, maxDist: number): ResourceNode | null {
+    let nearest: ResourceNode | null = null;
+    let nearestDist = maxDist;
+    for (const node of this.nodes) {
+      if (node.depleted || node.reserved) continue;
+      const dist = from.distanceTo(node.position);
+      if (dist < nearestDist) {
+        nearest = node;
+        nearestDist = dist;
+      }
+    }
+    return nearest;
+  }
+
+  reserve(node: ResourceNode) {
+    node.reserved = true;
+  }
+
+  release(node: ResourceNode) {
+    node.reserved = false;
+  }
+
   gather(node: ResourceNode): ResourceType {
     node.depleted = true;
+    node.reserved = false;
     node.mesh.visible = false;
     node.respawnAt = performance.now() / 1000 + RESPAWN_SECONDS;
     return node.type;

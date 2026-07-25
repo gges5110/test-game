@@ -501,12 +501,15 @@ function spawnAttackBeam(from: THREE.Vector3, to: THREE.Vector3, now: number) {
 // Wolves spawn in escalating waves and beeline for the nearest building —
 // walls and towers are the town's only defense (no player avatar to fight).
 let wolves: Wolf[] = [];
-let nextWaveAt = 30;
+// Give a fresh town time to gather a first tower/wall before anything
+// attacks — previously the first wave hit at 30s, often before players
+// even understood defenses existed, which could end the run outright.
+let nextWaveAt = 75;
 const WAVE_INTERVAL = 45;
 
 function spawnWave() {
   waveNumber++;
-  const count = 2 + waveNumber;
+  const count = 1 + waveNumber;
   for (let i = 0; i < count; i++) {
     const angle = Math.random() * Math.PI * 2;
     const dist = 60 + Math.random() * 40;

@@ -6,6 +6,8 @@ export type ResourceType = "wood" | "stone" | "food";
 export interface ResourceNode {
   type: ResourceType;
   position: THREE.Vector3;
+  /** Invisible pick target — never added to the scene, used only for
+   * raycasting. The actual visuals are drawn by shared InstancedMeshes. */
   mesh: THREE.Object3D;
   depleted: boolean;
   respawnAt: number;
@@ -22,6 +24,13 @@ const CLUSTER_RADIUS = 12;
 const MIN_CLUSTER_DIST_FROM_SPAWN = 12;
 const MAX_CLUSTER_DIST_FROM_SPAWN = 42;
 
+/** Radius of the invisible pick target for each resource type. */
+const PICK_RADIUS: Record<ResourceType, number> = {
+  wood: 1,
+  stone: 0.55,
+  food: 0.55,
+};
+
 function mulberry32(seed: number) {
   let a = seed;
   return () => {
@@ -33,62 +42,65 @@ function mulberry32(seed: number) {
   };
 }
 
-function createTreeMesh(): THREE.Object3D {
-  const group = new THREE.Group();
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.15, 0.2, 1.4, 6),
-    new THREE.MeshStandardMaterial({ color: 0x5c4326 }),
-  );
-  trunk.position.y = 0.7;
-  trunk.castShadow = true;
-  group.add(trunk);
-
-  const foliage = new THREE.Mesh(
-    new THREE.ConeGeometry(0.9, 1.8, 8),
-    new THREE.MeshStandardMaterial({ color: 0x2f6b3a }),
-  );
-  foliage.position.y = 2.1;
-  foliage.castShadow = true;
-  group.add(foliage);
-
-  return group;
+/** A part appears once (or a few fixed times) per node of its type, always at
+ * the same local offset — trees, rocks and bushes are procedural but not
+ * randomized per-instance, so one InstancedMesh per part can stand in for
+ * every node of that type instead of a unique Mesh each. */
+interface PartTemplate {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material;
+  /** Local offsets relative to the node origin — one entry per repetition
+   * of this part within a single node (e.g. a bush has several lumps). */
+  locals: THREE.Matrix4[];
 }
 
-function createRockMesh(): THREE.Object3D {
-  const rock = new THREE.Mesh(
-    new THREE.DodecahedronGeometry(0.5, 0),
-    new THREE.MeshStandardMaterial({ color: 0x8a8378 }),
+function localMatrix(
+  x: number,
+  y: number,
+  z: number,
+  scaleY = 1,
+): THREE.Matrix4 {
+  return new THREE.Matrix4().compose(
+    new THREE.Vector3(x, y, z),
+    new THREE.Quaternion(),
+    new THREE.Vector3(1, scaleY, 1),
   );
-  rock.position.y = 0.35;
-  rock.castShadow = true;
-  return rock;
 }
 
-function createBushMesh(): THREE.Object3D {
-  const group = new THREE.Group();
-  const foliageMat = new THREE.MeshStandardMaterial({ color: 0x4a7c3f });
+function treeParts(): PartTemplate[] {
+  return [
+    {
+      geometry: new THREE.CylinderGeometry(0.15, 0.2, 1.4, 6),
+      material: new THREE.MeshStandardMaterial({ color: 0x5c4326 }),
+      locals: [localMatrix(0, 0.7, 0)],
+    },
+    {
+      geometry: new THREE.ConeGeometry(0.9, 1.8, 8),
+      material: new THREE.MeshStandardMaterial({ color: 0x2f6b3a }),
+      locals: [localMatrix(0, 2.1, 0)],
+    },
+  ];
+}
 
-  // Several overlapping lumps read as a fuller bush than one sphere.
-  const lumps: [number, number, number, number][] = [
+function rockParts(): PartTemplate[] {
+  return [
+    {
+      geometry: new THREE.DodecahedronGeometry(0.5, 0),
+      material: new THREE.MeshStandardMaterial({ color: 0x8a8378 }),
+      locals: [localMatrix(0, 0.35, 0)],
+    },
+  ];
+}
+
+/** Several overlapping lumps read as a fuller bush than one sphere; bright
+ * berries dotted across the foliage make it read as "food" at a glance. */
+function bushParts(): PartTemplate[] {
+  const lumpSpots: [number, number, number, number][] = [
     [0, 0.32, 0, 0.42],
     [0.28, 0.24, 0.1, 0.3],
     [-0.26, 0.22, -0.14, 0.28],
     [0.05, 0.24, -0.28, 0.27],
   ];
-  for (const [x, y, z, radius] of lumps) {
-    const lump = new THREE.Mesh(new THREE.SphereGeometry(radius, 8, 6), foliageMat);
-    lump.position.set(x, y, z);
-    lump.scale.y = 0.75;
-    lump.castShadow = true;
-    group.add(lump);
-  }
-
-  // Bright berries dotted across the foliage make it read as "food" at a glance.
-  const berryMat = new THREE.MeshStandardMaterial({
-    color: 0xd6335c,
-    emissive: 0x8a0f2c,
-    emissiveIntensity: 0.3,
-  });
   const berrySpots: [number, number, number][] = [
     [0.15, 0.5, 0.18],
     [-0.18, 0.46, 0.08],
@@ -97,23 +109,51 @@ function createBushMesh(): THREE.Object3D {
     [0.02, 0.4, -0.32],
     [0.1, 0.3, 0.3],
   ];
-  for (const [x, y, z] of berrySpots) {
-    const berry = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), berryMat);
-    berry.position.set(x, y, z);
-    group.add(berry);
-  }
-
-  return group;
+  return [
+    {
+      // All lumps share one radius-0.42 sphere geometry scaled per-instance
+      // via the matrix, so differing lump sizes don't need separate geometries.
+      geometry: new THREE.SphereGeometry(1, 8, 6),
+      material: new THREE.MeshStandardMaterial({ color: 0x4a7c3f }),
+      // Bake each lump's radius and the shared vertical squash (0.75) into
+      // its instance scale, since they all share one unit-radius geometry.
+      locals: lumpSpots.map(([x, y, z, radius]) =>
+        localMatrix(x, y, z).multiply(
+          new THREE.Matrix4().makeScale(radius, radius * 0.75, radius),
+        ),
+      ),
+    },
+    {
+      geometry: new THREE.SphereGeometry(0.06, 6, 6),
+      material: new THREE.MeshStandardMaterial({
+        color: 0xd6335c,
+        emissive: 0x8a0f2c,
+        emissiveIntensity: 0.3,
+      }),
+      locals: berrySpots.map(([x, y, z]) => localMatrix(x, y, z)),
+    },
+  ];
 }
 
-function meshFactory(type: ResourceType): THREE.Object3D {
-  if (type === "wood") return createTreeMesh();
-  if (type === "stone") return createRockMesh();
-  return createBushMesh();
+function partsFor(type: ResourceType): PartTemplate[] {
+  if (type === "wood") return treeParts();
+  if (type === "stone") return rockParts();
+  return bushParts();
 }
+
+/** One instance slot within one part's InstancedMesh, bound to a node. */
+interface InstanceRef {
+  instancedMesh: THREE.InstancedMesh;
+  index: number;
+  baseMatrix: THREE.Matrix4;
+}
+
+const HIDDEN_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
 
 export class ResourceManager {
   readonly nodes: ResourceNode[] = [];
+  /** Every instanced-mesh slot that a given node's visuals occupy. */
+  private instanceRefs = new Map<ResourceNode, InstanceRef[]>();
   private scene: THREE.Scene;
 
   constructor(scene: THREE.Scene) {
@@ -124,6 +164,13 @@ export class ResourceManager {
   private placeNodes() {
     const rng = mulberry32(PLACEMENT_SEED);
     const types: ResourceType[] = ["wood", "stone", "food"];
+
+    // Positions first, so each type's InstancedMeshes can be sized exactly.
+    const positionsByType: Record<ResourceType, THREE.Vector3[]> = {
+      wood: [],
+      stone: [],
+      food: [],
+    };
 
     for (const type of types) {
       const nodesPerCluster = Math.ceil(NODE_COUNT_PER_TYPE / CLUSTERS_PER_TYPE);
@@ -157,25 +204,75 @@ export class ResourceManager {
             Math.abs(heightAt(x + 1, z) - y) + Math.abs(heightAt(x, z + 1) - y);
           if (slope > 0.5) continue; // avoid steep terrain
 
-          const mesh = meshFactory(type);
-          mesh.position.set(x, y, z);
-          this.scene.add(mesh);
-
-          const node: ResourceNode = {
-            type,
-            position: new THREE.Vector3(x, y, z),
-            mesh,
-            depleted: false,
-            respawnAt: 0,
-            reserved: false,
-          };
-          mesh.userData.resourceNode = node;
-          this.nodes.push(node);
+          positionsByType[type].push(new THREE.Vector3(x, y, z));
           clusterPlaced++;
           placed++;
         }
       }
     }
+
+    for (const type of types) {
+      this.buildType(type, positionsByType[type]);
+    }
+  }
+
+  /** Builds one InstancedMesh per part for `type` and registers each node. */
+  private buildType(type: ResourceType, positions: THREE.Vector3[]) {
+    const parts = partsFor(type);
+    const instancedByPart = parts.map((part) => {
+      const totalInstances = positions.length * part.locals.length;
+      const instanced = new THREE.InstancedMesh(
+        part.geometry,
+        part.material,
+        Math.max(totalInstances, 1),
+      );
+      instanced.count = totalInstances;
+      instanced.castShadow = true;
+      instanced.frustumCulled = false; // instances span the whole map
+      this.scene.add(instanced);
+      return instanced;
+    });
+
+    const nodeWorld = new THREE.Matrix4();
+    let cursor = parts.map(() => 0);
+
+    for (const position of positions) {
+      nodeWorld.makeTranslation(position.x, position.y, position.z);
+      const refs: InstanceRef[] = [];
+
+      parts.forEach((part, partIndex) => {
+        const instancedMesh = instancedByPart[partIndex];
+        for (const local of part.locals) {
+          const index = cursor[partIndex]++;
+          const baseMatrix = nodeWorld.clone().multiply(local);
+          instancedMesh.setMatrixAt(index, baseMatrix);
+          refs.push({ instancedMesh, index, baseMatrix });
+        }
+      });
+
+      // A single small invisible box stands in for the whole node; never
+      // added to the scene, so it costs nothing to render — only used so
+      // raycasting/gather commands can still resolve back to this node.
+      const pickMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(PICK_RADIUS[type], 6, 4),
+      );
+      pickMesh.position.copy(position);
+      pickMesh.updateMatrixWorld(true);
+
+      const node: ResourceNode = {
+        type,
+        position,
+        mesh: pickMesh,
+        depleted: false,
+        respawnAt: 0,
+        reserved: false,
+      };
+      pickMesh.userData.resourceNode = node;
+      this.nodes.push(node);
+      this.instanceRefs.set(node, refs);
+    }
+
+    for (const instanced of instancedByPart) instanced.instanceMatrix.needsUpdate = true;
   }
 
   findGatherable(playerPosition: THREE.Vector3): ResourceNode | null {
@@ -218,8 +315,8 @@ export class ResourceManager {
   gather(node: ResourceNode): ResourceType {
     node.depleted = true;
     node.reserved = false;
-    node.mesh.visible = false;
     node.respawnAt = performance.now() / 1000 + RESPAWN_SECONDS;
+    this.setInstancesVisible(node, false);
     return node.type;
   }
 
@@ -228,8 +325,22 @@ export class ResourceManager {
     for (const node of this.nodes) {
       if (node.depleted && now >= node.respawnAt) {
         node.depleted = false;
-        node.mesh.visible = true;
+        this.setInstancesVisible(node, true);
       }
     }
+  }
+
+  /** Toggles a depleted node's visuals by zero-scaling its instance slots,
+   * rather than changing per-mesh `count` (which would require the node's
+   * slots to stay contiguous — zero-scale works regardless of ordering). */
+  private setInstancesVisible(node: ResourceNode, visible: boolean) {
+    const refs = this.instanceRefs.get(node);
+    if (!refs) return;
+    const touched = new Set<THREE.InstancedMesh>();
+    for (const ref of refs) {
+      ref.instancedMesh.setMatrixAt(ref.index, visible ? ref.baseMatrix : HIDDEN_MATRIX);
+      touched.add(ref.instancedMesh);
+    }
+    for (const instancedMesh of touched) instancedMesh.instanceMatrix.needsUpdate = true;
   }
 }

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import Stats from "stats.js";
 import { createTerrain, heightAt, WORLD_SIZE } from "./world/terrain";
 import { ResourceManager, type ResourceType } from "./world/resources";
 import {
@@ -60,7 +61,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.15;
 
-const { composer, setSize: setComposerSize } = createComposer(
+const { composer, setSize: setComposerSize, setOutlined } = createComposer(
   renderer,
   scene,
   rtsCamera.camera,
@@ -71,6 +72,25 @@ window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   setComposerSize(window.innerWidth, window.innerHeight);
 });
+
+/**
+ * Perf HUD, dev-only: this project keeps adding rendering cost (bloom,
+ * outlines, particles, more units) with no instrumentation, which turns
+ * "is this slow" into a guess. import.meta.env.DEV keeps the visible panel
+ * out of the production page; begin()/end() still run but are ~free.
+ */
+const stats = new Stats();
+if (import.meta.env.DEV) {
+  stats.showPanel(0);
+  // Every corner is already HUD chrome (resource pills top-left, population
+  // and settings top-right, command grid bottom-left, minimap bottom-right)
+  // — tuck it just under the top bar instead of stacking on top of any of it.
+  stats.dom.style.top = "68px";
+  stats.dom.style.left = "";
+  stats.dom.style.right = "8px";
+  stats.dom.style.bottom = "";
+  document.body.appendChild(stats.dom);
+}
 
 const clock = new THREE.Clock();
 
@@ -130,6 +150,7 @@ function finishConstruction(building: PlacedBuilding) {
       scene.remove(villager.model);
       villagers = villagers.filter((v) => v !== villager);
       selectedVillagers = selectedVillagers.filter((v) => v !== villager);
+      syncSelectionOutline();
     };
   }
 }
@@ -235,6 +256,7 @@ if (savedGame) {
       scene.remove(villager.model);
       villagers = villagers.filter((v) => v !== villager);
       selectedVillagers = selectedVillagers.filter((v) => v !== villager);
+      syncSelectionOutline();
     };
   }
   inventory.restore(savedGame.inventory);
@@ -266,6 +288,18 @@ let selectedVillagers: Villager[] = [];
 let selectedBuildingInfo: PlacedBuilding | null = null;
 let selectedSoldiers: Soldier[] = [];
 
+/** Keeps the post-fx outline in sync with whatever is currently selected —
+ * the same rim-around-the-unit treatment the AoE2 selection research called
+ * for, on top of (not instead of) the existing ground rings. */
+function syncSelectionOutline() {
+  const objects: THREE.Object3D[] = [
+    ...selectedVillagers.map((v) => v.model),
+    ...selectedSoldiers.map((s) => s.model),
+  ];
+  if (selectedBuildingInfo) objects.push(selectedBuildingInfo.mesh);
+  setOutlined(objects);
+}
+
 /** Villagers and soldiers can be selected together (a box drag grabs both),
  * so selecting units only clears the building selection, not each other. */
 function selectUnits(villagerList: Villager[], soldierList: Soldier[]) {
@@ -276,6 +310,7 @@ function selectUnits(villagerList: Villager[], soldierList: Soldier[]) {
   selectedSoldiers = soldierList;
   for (const v of selectedVillagers) v.setSelected(true);
   for (const s of selectedSoldiers) s.setSelected(true);
+  syncSelectionOutline();
 }
 
 function deselectUnits() {
@@ -283,6 +318,7 @@ function deselectUnits() {
   for (const s of selectedSoldiers) s.setSelected(false);
   selectedVillagers = [];
   selectedSoldiers = [];
+  syncSelectionOutline();
 }
 
 function selectBuilding(building: PlacedBuilding) {
@@ -291,6 +327,7 @@ function selectBuilding(building: PlacedBuilding) {
   selectedBuildingInfo = building;
   const ring = building.mesh.userData.selectionRing as THREE.Mesh | undefined;
   if (ring) ring.visible = true;
+  syncSelectionOutline();
 }
 
 function deselectBuilding() {
@@ -301,6 +338,7 @@ function deselectBuilding() {
     if (ring) ring.visible = false;
   }
   selectedBuildingInfo = null;
+  syncSelectionOutline();
 }
 
 function deselectAll() {
@@ -917,7 +955,10 @@ function damageBuilding(building: PlacedBuilding, amount: number) {
   const destroyed = townBuildings.damage(building, amount);
   if (destroyed) {
     townBuildings.remove(building, scene);
-    if (selectedBuildingInfo === building) selectedBuildingInfo = null;
+    if (selectedBuildingInfo === building) {
+      selectedBuildingInfo = null;
+      syncSelectionOutline();
+    }
   }
 }
 
@@ -972,6 +1013,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 function animate() {
+  stats.begin();
   const delta = Math.min(clock.getDelta(), 0.1);
   const time = clock.getElapsedTime();
 
@@ -989,6 +1031,7 @@ function animate() {
       s.dispose(scene);
       if (selectedSoldiers.includes(s)) {
         selectedSoldiers = selectedSoldiers.filter((sel) => sel !== s);
+        syncSelectionOutline();
       }
       return false;
     }
@@ -1101,6 +1144,7 @@ function animate() {
   hud.setSelectionInfo(buildSelectionInfo());
 
   composer.render();
+  stats.end();
   requestAnimationFrame(animate);
 }
 

@@ -3,6 +3,14 @@ import { heightAt } from "./terrain";
 import type { ResourceManager, ResourceNode, ResourceType } from "./resources";
 import type { Inventory } from "../systems/inventory";
 
+/** Matches the minimap's resource-node colors, so a carried resource reads
+ * as the same "thing" whether you're looking at the node or the villager. */
+const CARRY_COLOR: Record<ResourceType, number> = {
+  wood: 0x4a7c3f,
+  stone: 0x9a9086,
+  food: 0xd6335c,
+};
+
 const WANDER_RADIUS = 4;
 const JOB_SEARCH_RADIUS = 25;
 const SPEED = 1.6;
@@ -34,6 +42,7 @@ export class Villager {
   private moveTarget = new THREE.Vector3();
   private selectionRing: THREE.Mesh;
   private workIndicator: THREE.Mesh;
+  private carryIndicator: THREE.Mesh;
 
   private state: State = "idle";
   private targetNode: ResourceNode | null = null;
@@ -63,6 +72,10 @@ export class Villager {
     this.workIndicator = createWorkIndicator();
     this.workIndicator.visible = false;
     this.model.add(this.workIndicator);
+
+    this.carryIndicator = createCarryIndicator();
+    this.carryIndicator.visible = false;
+    this.model.add(this.carryIndicator);
   }
 
   setSelected(selected: boolean) {
@@ -104,6 +117,7 @@ export class Villager {
   update(delta: number, now: number) {
     this.workIndicator.visible =
       this.state === "gathering" || this.state === "building";
+    this.carryIndicator.visible = this.carrying !== null;
     switch (this.state) {
       case "toBuild":
         this.updateToBuild(delta);
@@ -180,6 +194,8 @@ export class Villager {
     if (now < this.gatherEndsAt) return;
     if (this.targetNode && !this.targetNode.depleted) {
       this.carrying = this.resources.gather(this.targetNode);
+      const material = this.carryIndicator.material as THREE.MeshStandardMaterial;
+      material.color.setHex(CARRY_COLOR[this.carrying]);
     }
     this.targetNode = null;
     this.state = "toHome";
@@ -256,6 +272,18 @@ function createWorkIndicator(): THREE.Mesh {
       emissiveIntensity: 1.2,
     }),
   );
+}
+
+/** A small bundle worn on the villager's back, shown only while returning
+ * with a resource — color set per-type in updateGathering(). */
+function createCarryIndicator(): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.24, 0.22, 0.2),
+    new THREE.MeshStandardMaterial({ color: 0xffffff }),
+  );
+  mesh.position.set(0, 0.95, -0.24);
+  mesh.castShadow = true;
+  return mesh;
 }
 
 function createSelectionRing(): THREE.Mesh {

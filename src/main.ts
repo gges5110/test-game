@@ -444,7 +444,14 @@ function unitIcon(unit: UnitKind | "villager"): string {
 }
 
 // AoE2 splits a villager's Build menu into economic and military pages.
-const ECONOMIC_BUILDINGS = ["house", "farm", "mill", "lumber_camp", "mining_camp"];
+const ECONOMIC_BUILDINGS = [
+  "house",
+  "farm",
+  "mill",
+  "lumber_camp",
+  "mining_camp",
+  "town_center",
+];
 const MILITARY_BUILDINGS = [
   "barracks",
   "archery_range",
@@ -458,6 +465,36 @@ function costSummary(cost: Partial<Record<ResourceType, number>>): string {
   return Object.entries(cost)
     .map(([type, amt]) => `${amt}${RESOURCE_ICON[type as ResourceType]}`)
     .join(" ");
+}
+
+/** What the unit-attribute panel shows while a Build ▸ Economic/Military
+ * option is hovered — cost, HP, attack and training stats for a building
+ * that doesn't exist in the world yet, so it's built from the def alone
+ * rather than reusing buildSelectionInfo's built/site variants. */
+function buildingPreviewInfo(def: BuildingDef): SelectionInfo {
+  const stats: [string, string][] = [];
+  if (Object.keys(def.cost).length > 0) stats.push(["💰 Cost", costSummary(def.cost)]);
+  stats.push(["🧱 Max HP", `${def.maxHp}`]);
+  stats.push(["⏱ Build Time", `${def.buildTime}s`]);
+  if (def.attack) {
+    stats.push(["⚔️ Damage", `${def.attack.damage}`]);
+    stats.push(["➹ Range", `${def.attack.range}`]);
+    stats.push(["⏱ Cooldown", `${def.attack.cooldown}s`]);
+  }
+  if (def.trains) {
+    stats.push([
+      `${unitIcon(def.trains.unit)} Trains`,
+      `${unitLabel(def.trains.unit)} (${def.trains.foodCost}${RESOURCE_ICON.food}, ${def.trains.time}s)`,
+    ]);
+  }
+  return {
+    key: `preview:${def.id}`,
+    title: def.name,
+    portrait: BUILDING_ICON[def.id] ?? "🏗️",
+    description: def.description,
+    stats,
+    commands: [],
+  };
 }
 
 function buildingCommand(def: BuildingDef): CommandButton {
@@ -475,6 +512,7 @@ function buildingCommand(def: BuildingDef): CommandButton {
     disabled: !buildManager.canBuild(def),
     tooltip: `${def.name} — ${def.description}`,
     onClick: () => startPlacement(def),
+    previewInfo: buildingPreviewInfo(def),
   };
 }
 
@@ -695,7 +733,7 @@ function buildSelectionInfo(): SelectionInfo | null {
       ["⚔️ Damage", `${stats.attackDamage}`],
       ["➹ Range", `${stats.attackRange}`],
       ["⏱ Cooldown", `${stats.attackCooldown}s`],
-      ["⛓ Leash", `${stats.leashRange}`],
+      ["🎯 Awareness", `${stats.awarenessRange}`],
     ],
     commands: [],
   };
@@ -721,6 +759,10 @@ function selectedSelectionKey(): unknown {
 let selectedBuildingType: BuildingDef | null = null;
 let ghost: THREE.Group | null = null;
 const MIN_BUILDING_SPACING = 3;
+/** Fallback click tolerance for adding builders to a site once it's raycast
+ * miss — generous enough to forgive a near-miss click, but tighter than
+ * MIN_BUILDING_SPACING so it can't ever straddle two adjacent sites. */
+const SITE_CLICK_RADIUS = 2.2;
 
 function startPlacement(building: BuildingDef) {
   if (ghost) {
@@ -837,19 +879,32 @@ function commandSelectedUnits(sx: number, sy: number) {
   }
 
   // Right-clicking an unfinished building sends villagers to work on it —
-  // the way to resume a site whose builders were killed or reassigned.
+  // the way to add more builders to a site, or resume one whose builders
+  // were killed or reassigned. Multiple villagers building the same site
+  // already stack (progress accrues per villager-second), but once a couple
+  // are standing on a small foundation they can visually cover it, making an
+  // exact-mesh click hard to land — so this also falls back to "nearest
+  // unfinished site to where you clicked," not just a precise raycast hit.
   if (selectedVillagers.length > 0) {
-    const siteHit = rtsCamera.raycastObjects(
-      sx,
-      sy,
-      townBuildings.list.filter((b) => b.underConstruction).map((b) => b.mesh),
-    );
-    if (siteHit) {
-      const site = resolveBuildingFromHit(siteHit);
-      if (site && site.underConstruction) {
-        for (const v of selectedVillagers) v.commandBuild(site);
-        return;
+    const sites = townBuildings.list.filter((b) => b.underConstruction);
+    const siteHit = rtsCamera.raycastObjects(sx, sy, sites.map((b) => b.mesh));
+    let site = siteHit ? resolveBuildingFromHit(siteHit) : null;
+    if (!site) {
+      const groundPoint = rtsCamera.raycastGround(sx, sy);
+      if (groundPoint) {
+        let nearestDist = SITE_CLICK_RADIUS;
+        for (const candidate of sites) {
+          const dist = groundPoint.distanceTo(candidate.position);
+          if (dist < nearestDist) {
+            nearestDist = dist;
+            site = candidate;
+          }
+        }
       }
+    }
+    if (site && site.underConstruction) {
+      for (const v of selectedVillagers) v.commandBuild(site);
+      return;
     }
   }
 

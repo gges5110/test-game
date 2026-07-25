@@ -12,8 +12,6 @@ export interface BuildingDef {
   requiresTownCenter?: boolean;
   /** Caps how many of this building can ever be placed. */
   maxBuilt?: number;
-  /** Excluded from the build menu (e.g. the free starting Town Center). */
-  hidden?: boolean;
   /** If set, this building auto-attacks the nearest wolf in range. */
   attack?: { range: number; damage: number; cooldown: number };
   /** Height (above the building's base) the attack beam is drawn from. Defaults to 2. */
@@ -36,12 +34,13 @@ export const BUILDINGS: BuildingDef[] = [
   {
     id: "town_center",
     name: "Town Center",
-    cost: {},
-    description: "Your town's founding building — select it to train Villagers",
+    cost: { wood: 30, stone: 15 },
+    description:
+      "Trains Villagers. Your town starts with one; building more expands where you can grow.",
     maxHp: 400,
     buildTime: 30,
-    maxBuilt: 1,
-    hidden: true,
+    maxBuilt: 3,
+    requiresTownCenter: true,
     trains: { unit: "villager", foodCost: 3, time: 8 },
   },
   {

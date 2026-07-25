@@ -11,8 +11,8 @@ A browser-based medieval-town RTS with tower-defense combat, built with Three.js
 - **Left-click** — select a villager or building
 - **Left-drag** — box-select multiple villagers
 - **Right-click** (or tap, on mobile) — command selected villagers: move to a point, or gather a resource node
-- **C** — open the Craft menu
-- **B** — open the Build menu
+- **B** — with a villager selected, jump to Build ▸ Economic
+- **M** — with a villager selected, jump to Build ▸ Military
 - **Esc** — close menus, cancel a placement, or deselect
 
 ## Gameplay

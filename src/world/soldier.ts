@@ -12,12 +12,14 @@ interface UnitPreset {
   attackRange: number;
   attackDamage: number;
   attackCooldown: number;
-  leashRange: number;
+  /** How far the unit notices threats from *its own current position* —
+   * not from home. Replaces the old home-tethered leash: a patrolling or
+   * moved unit still picks fights with whatever wanders near it, but won't
+   * spot (let alone chase) something on the other side of the map. */
+  awarenessRange: number;
   armorColor: number;
 }
 
-// Won't chase wolves farther than this from home, so units stay near town
-// instead of running off across the map — except Scouts, who roam farther.
 const UNIT_PRESETS: Record<UnitKind, UnitPreset> = {
   soldier: {
     label: "Soldier",
@@ -26,7 +28,7 @@ const UNIT_PRESETS: Record<UnitKind, UnitPreset> = {
     attackRange: 1.4,
     attackDamage: 14,
     attackCooldown: 0.8,
-    leashRange: 18,
+    awarenessRange: 18,
     armorColor: 0x556478,
   },
   archer: {
@@ -36,7 +38,7 @@ const UNIT_PRESETS: Record<UnitKind, UnitPreset> = {
     attackRange: 6,
     attackDamage: 9,
     attackCooldown: 1.1,
-    leashRange: 20,
+    awarenessRange: 20,
     armorColor: 0x3e6b3f,
   },
   scout: {
@@ -46,7 +48,7 @@ const UNIT_PRESETS: Record<UnitKind, UnitPreset> = {
     attackRange: 1.4,
     attackDamage: 10,
     attackCooldown: 0.9,
-    leashRange: 26,
+    awarenessRange: 26,
     armorColor: 0x8a5a2a,
   },
 };
@@ -61,8 +63,9 @@ const ATTACK_ANIM_TIME = 0.35;
 const RANGED_THRESHOLD = 2;
 
 /** An autonomous defender trained by Barracks/Archery Range/Stable: patrols
- * near home and engages any wolf (or, once ordered/moved near one, an enemy
- * camp's guards and buildings) within leash range. */
+ * near home and engages the nearest wolf, enemy guard, or enemy building
+ * anywhere on the map — no leash, so a standing army actually clears threats
+ * instead of only reacting to whatever wanders home. */
 export class Soldier {
   readonly model: THREE.Group;
   readonly kind: UnitKind;
@@ -85,7 +88,7 @@ export class Soldier {
   private attackAnim = 0;
   /** Player-issued move order; cleared on arrival. */
   private moveOrder: THREE.Vector3 | null = null;
-  /** Player-issued attack target, chased regardless of leash range. */
+  /** Player-issued attack target, chased until dead or recalled. */
   private orderedTarget: Combatant | null = null;
 
   constructor(scene: THREE.Scene, home: THREE.Vector3, kind: UnitKind = "soldier") {
@@ -129,7 +132,7 @@ export class Soldier {
     this.wanderTarget.copy(point);
   }
 
-  /** Player-issued: hunt a specific target, ignoring the usual leash. */
+  /** Player-issued: hunt a specific target until it dies or is recalled. */
   commandAttack(target: Combatant) {
     this.moveOrder = null;
     this.orderedTarget = target;
@@ -206,10 +209,9 @@ export class Soldier {
 
   private findTarget(targets: Combatant[]): Combatant | null {
     let nearest: Combatant | null = null;
-    let nearestDist = Infinity;
+    let nearestDist = this.stats.awarenessRange;
     for (const candidate of targets) {
       if (!candidate.alive) continue;
-      if (this.home.distanceTo(candidate.model.position) > this.stats.leashRange) continue;
       const dist = this.model.position.distanceTo(candidate.model.position);
       if (dist < nearestDist) {
         nearestDist = dist;

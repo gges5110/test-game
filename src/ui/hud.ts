@@ -48,6 +48,10 @@ export interface CommandButton {
   tooltip?: string;
   onClick?: () => void;
   children?: CommandButton[];
+  /** Shown in the unit-attribute panel while this button is hovered — lets
+   * browsing the Build ▸ Economic/Military page preview a building's cost,
+   * HP and attack stats before placing it. */
+  previewInfo?: SelectionInfo;
 }
 
 export interface SelectionInfo {
@@ -111,6 +115,13 @@ export class Hud {
   private lastQueueSig = "";
   private onCancelQueued: (index: number) => void = () => {};
   private onPickUnit: (index: number) => void = () => {};
+  /** The real selection's info, kept even while a hover preview is showing
+   * instead of it, so leaving the hovered button restores it exactly. */
+  private liveInfo: SelectionInfo | null = null;
+  /** Set while hovering a command with `previewInfo`; null the rest of the
+   * time. Takes over the panel display without touching the command grid,
+   * so browsing Build ▸ Economic/Military doesn't get kicked back a page. */
+  private previewInfo: SelectionInfo | null = null;
   /** Root commands for the current selection, plus which sub-page (by index
    * path) is drilled into — AoE2's Build → Economic/Military pages. */
   private rootCommands: CommandButton[] = [];
@@ -193,6 +204,22 @@ export class Hud {
       }
     });
 
+    // pointerover/out (not mouseenter/leave — those don't bubble, and this
+    // is delegated on the grid since buttons get redrawn under it).
+    this.cmdGridEl.addEventListener("pointerover", (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".cmd-btn");
+      if (!btn) return;
+      const cmd = this.currentPageCommands[Number(btn.dataset.i)];
+      // Resolve unconditionally (preview or back-to-live) so moving from a
+      // previewable button to a plain one (e.g. Back) within the same grid
+      // reverts immediately, rather than leaving the old preview stuck.
+      this.setPreviewInfo(cmd?.previewInfo ?? null);
+    });
+    this.cmdGridEl.addEventListener("pointerout", (e) => {
+      const stillInGrid = (e.relatedTarget as HTMLElement | null)?.closest(".cmd-grid");
+      if (!stillInGrid) this.setPreviewInfo(null);
+    });
+
     this.minimapCanvas.addEventListener("click", (e) => {
       const rect = this.minimapCanvas.getBoundingClientRect();
       const u = (e.clientX - rect.left) / rect.width;
@@ -257,6 +284,10 @@ export class Hud {
         } else {
           this.onCancelPlacement();
         }
+      } else if (e.code === "KeyB") {
+        this.jumpToBuildPage("Economic");
+      } else if (e.code === "KeyM") {
+        this.jumpToBuildPage("Military");
       }
     });
   }
@@ -336,6 +367,31 @@ export class Hud {
   }
 
   setSelectionInfo(info: SelectionInfo | null) {
+    this.liveInfo = info;
+    // A hovered build option is showing instead — don't let this frame's
+    // real-selection update (main.ts calls this every frame) clobber it.
+    if (this.previewInfo) return;
+    this.applySelectionInfo(info);
+  }
+
+  /** Shows a build option's stats in place of the real selection's, without
+   * touching the command grid — so hovering a button in Build ▸ Economic/
+   * Military doesn't reset you back out of that page. Pass null to restore
+   * whatever the real selection was showing. */
+  private setPreviewInfo(info: SelectionInfo | null) {
+    this.previewInfo = info;
+    const shown = info ?? this.liveInfo;
+    if (!shown) return;
+    // Always a full rebuild: hover enter/exit are human-paced events, not a
+    // per-frame path, so there's no cost concern that would call for the
+    // key/variant-diffed patch path applySelectionInfo uses.
+    this.lastInfoKeyRef = shown.key;
+    this.lastInfoVariant = shown.variant;
+    this.renderSelectionSkeleton(shown);
+    this.updateBarZones();
+  }
+
+  private applySelectionInfo(info: SelectionInfo | null) {
     if (!info) {
       this.showDefaultSelectionInfo();
       return;
@@ -485,6 +541,21 @@ export class Hud {
       this.queueStatusEl.textContent = info.queue.status ?? "";
       this.queueStatusEl.hidden = !info.queue.status;
     }
+  }
+
+  /** B / M hotkeys: jump straight into the villager's Build ▸ Economic or
+   * Build ▸ Military page, skipping the click-to-drill-in step. Looks the
+   * button up by its label/sub rather than a fixed index, so it's a no-op
+   * (not a wrong-page jump) whenever the current selection doesn't offer
+   * that page — e.g. a building or a soldier is selected instead. */
+  private jumpToBuildPage(sub: "Economic" | "Military") {
+    if (this.placementActive) return;
+    const index = this.rootCommands.findIndex(
+      (cmd) => cmd.label === "Build" && cmd.sub === sub && cmd.children,
+    );
+    if (index === -1) return;
+    this.commandPath = [index];
+    this.renderCommandGrid();
   }
 
   /** Resolves the command list for the page the player has drilled into. */

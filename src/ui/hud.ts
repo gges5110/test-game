@@ -9,6 +9,14 @@ const RESOURCE_LABEL: Record<ResourceType, string> = {
   food: "🍞 Food",
 };
 
+export interface SelectionInfo {
+  title: string;
+  description: string;
+  hp?: number;
+  maxHp?: number;
+  stats?: [string, string][];
+}
+
 export class Hud {
   private inventoryEl: HTMLElement;
   private townStatsEl: HTMLElement;
@@ -17,12 +25,14 @@ export class Hud {
   private buildMenuEl: HTMLElement;
   private placementButtonsEl: HTMLElement;
   private selectBoxEl: HTMLElement;
+  private infoEl: HTMLElement;
   private craftMenuOpen = false;
   private buildMenuOpen = false;
   private onSelectBuilding: (building: BuildingDef) => void = () => {};
   private onConfirmPlacement: () => void = () => {};
   private onCancelPlacement: () => void = () => {};
   private onReset: () => void = () => {};
+  private onCloseInfo: () => void = () => {};
 
   constructor(
     root: HTMLElement,
@@ -47,6 +57,7 @@ export class Hud {
       <div class="craft-menu" hidden></div>
       <div class="craft-menu" id="buildMenu" hidden></div>
       <div class="select-box" hidden></div>
+      <div class="building-info" hidden></div>
     `;
     this.inventoryEl = root.querySelector(".inventory")!;
     this.townStatsEl = root.querySelector(".townstats")!;
@@ -55,6 +66,7 @@ export class Hud {
     this.buildMenuEl = root.querySelector("#buildMenu")!;
     this.placementButtonsEl = root.querySelector(".placement-buttons")!;
     this.selectBoxEl = root.querySelector(".select-box")!;
+    this.infoEl = root.querySelector(".building-info")!;
 
     this.inventory.onChange(() => this.renderInventory());
     this.renderInventory();
@@ -128,6 +140,37 @@ export class Hud {
 
   setPlacementMode(active: boolean) {
     this.placementButtonsEl.hidden = !active;
+  }
+
+  setOnCloseInfo(handler: () => void) {
+    this.onCloseInfo = handler;
+  }
+
+  setSelectionInfo(info: SelectionInfo | null) {
+    if (!info) {
+      this.infoEl.hidden = true;
+      return;
+    }
+    this.infoEl.hidden = false;
+    const statsRows = (info.stats ?? [])
+      .map(([label, value]) => `<span>${label}</span><span>${value}</span>`)
+      .join("");
+    let hpBlock = "";
+    if (info.hp !== undefined && info.maxHp !== undefined) {
+      const pct = Math.max(0, Math.min(1, info.hp / info.maxHp)) * 100;
+      const hpColor = pct > 50 ? "#3fae54" : pct > 25 ? "#d4a72c" : "#c0392b";
+      hpBlock = `
+        <div class="hp-row"><span>HP</span><span>${Math.ceil(info.hp)}/${info.maxHp}</span></div>
+        <div class="hp-track"><div class="hp-fill" style="width:${pct}%;background:${hpColor}"></div></div>
+      `;
+    }
+    this.infoEl.innerHTML = `
+      <h2>${info.title}<button class="menu-close">✕</button></h2>
+      <div class="desc">${info.description}</div>
+      ${hpBlock}
+      ${statsRows ? `<div class="stats">${statsRows}</div>` : ""}
+    `;
+    this.infoEl.querySelector(".menu-close")!.addEventListener("click", () => this.onCloseInfo());
   }
 
   setSelectionBox(rect: { x1: number; y1: number; x2: number; y2: number } | null) {

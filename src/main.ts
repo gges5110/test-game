@@ -4,7 +4,7 @@ import { ResourceManager } from "./world/resources";
 import { createBuildingMesh, makeGhost, attachSelectionRing, attachHealthBar } from "./world/buildings";
 import type { HealthBar } from "./world/healthBar";
 import { Villager } from "./world/villager";
-import { Soldier } from "./world/soldier";
+import { Soldier, SOLDIER_STATS } from "./world/soldier";
 import { Wolf } from "./world/enemy";
 import { Inventory } from "./systems/inventory";
 import { Crafting } from "./systems/crafting";
@@ -13,7 +13,7 @@ import { TownBuildings, type PlacedBuilding } from "./systems/townBuildings";
 import { createLighting } from "./systems/lighting";
 import { RtsCamera } from "./systems/rtsCamera";
 import { saveGame, loadGame, clearSave, type SaveData } from "./systems/save";
-import { Hud } from "./ui/hud";
+import { Hud, type SelectionInfo } from "./ui/hud";
 
 const canvas = document.getElementById("view") as HTMLCanvasElement;
 const hudRoot = document.getElementById("hud") as HTMLElement;
@@ -139,9 +139,11 @@ rtsCamera.focus.set(0, heightAt(0, 0), 0);
 
 let selectedVillagers: Villager[] = [];
 let selectedBuildingInfo: PlacedBuilding | null = null;
+let selectedSoldier: Soldier | null = null;
 
 function selectVillagers(list: Villager[]) {
   deselectBuilding();
+  deselectSoldier();
   for (const v of selectedVillagers) v.setSelected(false);
   selectedVillagers = list;
   for (const v of selectedVillagers) v.setSelected(true);
@@ -155,6 +157,7 @@ function deselectVillager() {
 function selectBuilding(building: PlacedBuilding) {
   deselectVillager();
   deselectBuilding();
+  deselectSoldier();
   selectedBuildingInfo = building;
   const ring = building.mesh.userData.selectionRing as THREE.Mesh | undefined;
   if (ring) ring.visible = true;
@@ -168,15 +171,38 @@ function deselectBuilding() {
   selectedBuildingInfo = null;
 }
 
+function selectSoldier(soldier: Soldier) {
+  deselectVillager();
+  deselectBuilding();
+  deselectSoldier();
+  selectedSoldier = soldier;
+  soldier.setSelected(true);
+}
+
+function deselectSoldier() {
+  if (selectedSoldier) selectedSoldier.setSelected(false);
+  selectedSoldier = null;
+}
+
 function deselectAll() {
   deselectVillager();
   deselectBuilding();
+  deselectSoldier();
 }
 
 function resolveVillagerFromHit(hit: THREE.Object3D): Villager | null {
   let obj: THREE.Object3D | null = hit;
   while (obj) {
     if (obj.userData.villager) return obj.userData.villager as Villager;
+    obj = obj.parent;
+  }
+  return null;
+}
+
+function resolveSoldierFromHit(hit: THREE.Object3D): Soldier | null {
+  let obj: THREE.Object3D | null = hit;
+  while (obj) {
+    if (obj.userData.soldier) return obj.userData.soldier as Soldier;
     obj = obj.parent;
   }
   return null;
@@ -198,6 +224,58 @@ function resolveBuildingFromHit(hit: THREE.Object3D): PlacedBuilding | null {
     if (match) return match;
     obj = obj.parent;
   }
+  return null;
+}
+
+/** Builds the info panel content for whatever is currently selected, if anything. */
+function buildSelectionInfo(): SelectionInfo | null {
+  if (selectedBuildingInfo) {
+    const def = selectedBuildingInfo.def;
+    const stats: [string, string][] = def.attack
+      ? [
+          ["Range", `${def.attack.range}`],
+          ["Damage", `${def.attack.damage}`],
+          ["Cooldown", `${def.attack.cooldown}s`],
+        ]
+      : [];
+    return {
+      title: def.name,
+      description: def.description,
+      hp: selectedBuildingInfo.hp,
+      maxHp: selectedBuildingInfo.maxHp,
+      stats,
+    };
+  }
+
+  if (selectedSoldier) {
+    return {
+      title: "Soldier",
+      description: "Trained by a Barracks. Patrols near home and auto-attacks any wolf within range.",
+      hp: selectedSoldier.hp,
+      maxHp: SOLDIER_STATS.maxHp,
+      stats: [
+        ["Damage", `${SOLDIER_STATS.attackDamage}`],
+        ["Attack range", `${SOLDIER_STATS.attackRange}`],
+        ["Cooldown", `${SOLDIER_STATS.attackCooldown}s`],
+        ["Leash range", `${SOLDIER_STATS.leashRange}`],
+      ],
+    };
+  }
+
+  if (selectedVillagers.length === 1) {
+    return {
+      title: "Villager",
+      description: "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
+    };
+  }
+
+  if (selectedVillagers.length > 1) {
+    return {
+      title: `${selectedVillagers.length} Villagers`,
+      description: "Right-click ground to move as a group, or a resource for all to gather.",
+    };
+  }
+
   return null;
 }
 
@@ -268,6 +346,7 @@ function handleEscape() {
 
 hud.setOnConfirmPlacement(confirmPlacement);
 hud.setOnCancelPlacement(handleEscape);
+hud.setOnCloseInfo(deselectAll);
 hud.setOnReset(() => {
   clearSave();
   window.location.reload();
@@ -339,6 +418,15 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   if (isTouch && selectedVillagers.length > 0) {
     commandSelectedVillager(sx, sy);
     return;
+  }
+
+  const soldierHit = rtsCamera.raycastObjects(sx, sy, soldiers.map((s) => s.model));
+  if (soldierHit) {
+    const soldier = resolveSoldierFromHit(soldierHit);
+    if (soldier) {
+      selectSoldier(soldier);
+      return;
+    }
   }
 
   const buildingHit = rtsCamera.raycastObjects(sx, sy, townBuildings.list.map((b) => b.mesh));
@@ -486,6 +574,7 @@ function animate() {
   soldiers = soldiers.filter((s) => {
     if (!s.alive) {
       s.dispose(scene);
+      if (selectedSoldier === s) selectedSoldier = null;
       return false;
     }
     return true;
@@ -573,14 +662,8 @@ function animate() {
       ? "Too close to another building — move elsewhere"
       : `Click (or tap ✓) to place ${selectedBuildingType.name}`;
   }
-  const buildingInfoPrompt = selectedBuildingInfo
-    ? `${selectedBuildingInfo.def.name} — HP ${Math.ceil(selectedBuildingInfo.hp)}/${selectedBuildingInfo.maxHp}`
-    : null;
-  const selectionPrompt =
-    selectedVillagers.length > 0
-      ? `${selectedVillagers.length} villager${selectedVillagers.length > 1 ? "s" : ""} selected — right-click (or tap) ground to move, resource to gather`
-      : null;
-  hud.setPrompt(placementPrompt ?? buildingInfoPrompt ?? selectionPrompt);
+  hud.setPrompt(placementPrompt);
+  hud.setSelectionInfo(buildSelectionInfo());
 
   renderer.render(scene, rtsCamera.camera);
   requestAnimationFrame(animate);

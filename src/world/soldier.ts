@@ -7,17 +7,25 @@ const SPEED = 2.1;
 const CONTACT_RANGE = 1.4;
 const ATTACK_COOLDOWN = 0.8;
 const ATTACK_DAMAGE = 14;
-const MAX_HP = 60;
+export const SOLDIER_MAX_HP = 60;
 // Won't chase wolves farther than this from its home barracks, so soldiers
 // stay near the town instead of running off across the map.
 const LEASH_RANGE = 18;
 const WANDER_RADIUS = 2.5;
 
+export const SOLDIER_STATS = {
+  maxHp: SOLDIER_MAX_HP,
+  attackRange: CONTACT_RANGE,
+  attackDamage: ATTACK_DAMAGE,
+  attackCooldown: ATTACK_COOLDOWN,
+  leashRange: LEASH_RANGE,
+};
+
 /** An autonomous defender trained by a Barracks: patrols near home and
  * engages any wolf that wanders within leash range — no player commands. */
 export class Soldier {
   readonly model: THREE.Group;
-  hp = MAX_HP;
+  hp = SOLDIER_MAX_HP;
   alive = true;
 
   private home: THREE.Vector3;
@@ -25,13 +33,19 @@ export class Soldier {
   private attackReadyAt = 0;
   private wanderTarget: THREE.Vector3;
   private wanderWaitUntil = 0;
+  private selectionRing: THREE.Mesh;
 
   constructor(scene: THREE.Scene, home: THREE.Vector3) {
     this.home = home.clone();
     this.wanderTarget = home.clone();
     this.model = createSoldierModel();
     this.model.position.copy(home);
+    this.model.userData.soldier = this;
     scene.add(this.model);
+
+    this.selectionRing = createSelectionRing();
+    this.selectionRing.visible = false;
+    this.model.add(this.selectionRing);
 
     this.healthBar = createHealthBar(0.7, 0.1);
     scene.add(this.healthBar.group);
@@ -40,6 +54,10 @@ export class Soldier {
 
   getHome(): THREE.Vector3 {
     return this.home.clone();
+  }
+
+  setSelected(selected: boolean) {
+    this.selectionRing.visible = selected;
   }
 
   update(delta: number, now: number, wolves: Wolf[]) {
@@ -70,7 +88,7 @@ export class Soldier {
   takeDamage(amount: number): boolean {
     if (!this.alive) return false;
     this.hp -= amount;
-    this.healthBar.setFraction(this.hp / MAX_HP);
+    this.healthBar.setFraction(this.hp / SOLDIER_MAX_HP);
     if (this.hp <= 0) {
       this.alive = false;
       this.model.visible = false;
@@ -128,6 +146,16 @@ export class Soldier {
     this.model.position.y = heightAt(this.model.position.x, this.model.position.z);
     this.model.rotation.y = Math.atan2(toTarget.x, toTarget.z);
   }
+}
+
+function createSelectionRing(): THREE.Mesh {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.4, 0.5, 24),
+    new THREE.MeshBasicMaterial({ color: 0x6fe3ff, side: THREE.DoubleSide }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  return ring;
 }
 
 function createSoldierModel(): THREE.Group {

@@ -365,6 +365,7 @@ hud.setOnTrade((give, get) => {
   inventory.add(get, TRADE_GET);
 });
 hud.setOnReset(() => {
+  resetting = true;
   clearSave();
   window.location.reload();
 });
@@ -571,11 +572,20 @@ function collectSaveData(): SaveData {
   };
 }
 
+// Set once the player resets their town, so a stray autosave (e.g. the
+// beforeunload fired by the reload below) can't silently restore the
+// just-cleared save before the fresh page load reads it.
+let resetting = false;
+
 const AUTOSAVE_INTERVAL_MS = 5000;
-setInterval(() => saveGame(collectSaveData()), AUTOSAVE_INTERVAL_MS);
-window.addEventListener("beforeunload", () => saveGame(collectSaveData()));
+setInterval(() => {
+  if (!resetting) saveGame(collectSaveData());
+}, AUTOSAVE_INTERVAL_MS);
+window.addEventListener("beforeunload", () => {
+  if (!resetting) saveGame(collectSaveData());
+});
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") saveGame(collectSaveData());
+  if (document.visibilityState === "hidden" && !resetting) saveGame(collectSaveData());
 });
 
 function animate() {

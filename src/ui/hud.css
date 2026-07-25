@@ -264,30 +264,32 @@ html, body {
 
 #hud .commands-default {
   flex: 1;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
 }
 
 #hud .commands-default .qbtn {
-  height: 100%;
+  width: 72px;
+  height: 72px;
   border-radius: 8px;
   border: 2px solid var(--bronze);
   background: linear-gradient(180deg, var(--wood-light) 0%, var(--wood-dark) 100%);
   color: #fff;
-  font-size: 30px;
+  font-size: 22px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 4px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -2px 4px rgba(0, 0, 0, 0.5);
   transition: border-color 0.12s ease, transform 0.08s ease, box-shadow 0.12s ease;
 }
 
 #hud .commands-default .qbtn span {
-  font-size: 14px;
+  font-size: 11px;
   font-family: Georgia, serif;
 }
 

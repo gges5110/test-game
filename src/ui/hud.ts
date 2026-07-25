@@ -655,16 +655,17 @@ export class Hud {
     this.townStatsEl.innerHTML = `👥 ${population}<br><small>🏘️ ${buildingCount} buildings</small>${soldierLine}`;
   }
 
-  /** Shows a countdown to the next wolf wave and how many are coming, with
-   * escalating urgency (color + pulse) as it gets close. */
-  setWaveWarning(secondsLeft: number, wolfCount: number) {
+  /** Shows a countdown to the enemy camp's next raid attempt, with
+   * escalating urgency (color + pulse) as it gets close. No guaranteed
+   * count is shown — a raid can fizzle if the camp hasn't grown enough
+   * guards to spare any, so promising a number would sometimes be a lie. */
+  setRaidWarning(secondsLeft: number) {
     const urgent = secondsLeft <= 10;
     const soon = secondsLeft <= 20;
     this.waveWarningEl.classList.toggle("urgent", urgent);
     this.waveWarningEl.classList.toggle("soon", soon && !urgent);
     const seconds = Math.max(0, Math.ceil(secondsLeft));
-    const wolfWord = wolfCount === 1 ? "wolf" : "wolves";
-    this.waveWarningEl.textContent = `🐺 Wave incoming: ${seconds}s — ${wolfCount} ${wolfWord}`;
+    this.waveWarningEl.textContent = `⚔️ Raid incoming: ${seconds}s`;
   }
 
   setPrompt(text: string | null) {

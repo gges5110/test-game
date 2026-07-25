@@ -14,12 +14,12 @@ import {
 import type { HealthBar } from "./world/healthBar";
 import { Villager } from "./world/villager";
 import { Soldier, getUnitStats, type UnitKind } from "./world/soldier";
-import { Wolf } from "./world/enemy";
 import {
   createEnemyCamp,
+  updateEnemyCamp,
+  wrapCampBuilding,
   type EnemyCamp,
   type EnemyGuard,
-  type EnemyBuilding,
 } from "./world/enemyCamp";
 import { Effects } from "./world/effects";
 import { Inventory } from "./systems/inventory";
@@ -119,13 +119,7 @@ const effects = new Effects(scene);
 // expedition, not something you stumble into while gathering.
 const ENEMY_CAMP_CENTER = new THREE.Vector3(64, 0, 46);
 ENEMY_CAMP_CENTER.y = heightAt(ENEMY_CAMP_CENTER.x, ENEMY_CAMP_CENTER.z);
-const enemyCamp: EnemyCamp = createEnemyCamp(scene, ENEMY_CAMP_CENTER);
-for (const guard of enemyCamp.guards) {
-  guard.onAttack = (_from, to) => {
-    effects.slash(to, guard.model.rotation.y, 0xff8a8a);
-    effects.impact(to, 0xd66a4a);
-  };
-}
+const enemyCamp: EnemyCamp = createEnemyCamp(scene, ENEMY_CAMP_CENTER, effects);
 
 function gatherBonus(type: Parameters<typeof crafting.gatherBonus>[0]) {
   return crafting.gatherBonus(type);
@@ -188,15 +182,6 @@ function makeSoldier(at: THREE.Vector3, kind: UnitKind): Soldier {
   return soldier;
 }
 
-function makeWolf(at: THREE.Vector3): Wolf {
-  const wolf = new Wolf(scene, at);
-  wolf.onBite = (bite) => {
-    effects.slash(bite, wolf.model.rotation.y, 0xff8a8a);
-    effects.impact(bite, 0xd66a4a);
-  };
-  return wolf;
-}
-
 function onVillagerBuildTick(
   site: { position: THREE.Vector3; underConstruction: boolean },
   delta: number,
@@ -221,7 +206,6 @@ function makeVillager(at: THREE.Vector3): Villager {
 let villagers: Villager[] = [];
 let soldiers: Soldier[] = [];
 let producers: { building: PlacedBuilding; timer: number }[] = [];
-let waveNumber = 0;
 
 /** Registers a placed building as a passive resource producer if its def
  * calls for one, wiring cleanup for when it's destroyed. Unit training is
@@ -282,7 +266,6 @@ if (savedGame) {
   inventory.restore(savedGame.inventory);
   buildManager.restore(savedGame.built);
   crafting.restore(savedGame.crafted);
-  waveNumber = savedGame.waveNumber;
 } else {
   // Fresh town: a free Town Center and three villagers already working —
   // mirrors classic RTS onboarding (no manual gathering needed to
@@ -384,16 +367,6 @@ function resolveSoldierFromHit(hit: THREE.Object3D): Soldier | null {
   return null;
 }
 
-function resolveWolfFromHit(hit: THREE.Object3D): Wolf | null {
-  let obj: THREE.Object3D | null = hit;
-  while (obj) {
-    const match = wolves.find((w) => w.model === obj);
-    if (match) return match;
-    obj = obj.parent;
-  }
-  return null;
-}
-
 function resolveEnemyGuardFromHit(hit: THREE.Object3D): EnemyGuard | null {
   let obj: THREE.Object3D | null = hit;
   while (obj) {
@@ -403,10 +376,11 @@ function resolveEnemyGuardFromHit(hit: THREE.Object3D): EnemyGuard | null {
   return null;
 }
 
-function resolveEnemyBuildingFromHit(hit: THREE.Object3D): EnemyBuilding | null {
+function resolveEnemyBuildingFromHit(hit: THREE.Object3D): PlacedBuilding | null {
   let obj: THREE.Object3D | null = hit;
   while (obj) {
-    if (obj.userData.enemyBuilding) return obj.userData.enemyBuilding as EnemyBuilding;
+    const match = enemyCamp.townBuildings.list.find((b) => b.mesh === obj);
+    if (match) return match;
     obj = obj.parent;
   }
   return null;
@@ -689,8 +663,8 @@ function buildSelectionInfo(): SelectionInfo | null {
       key: selectedSelectionKey(),
       title: label,
       description: hasVillagers
-        ? "Right-click to move; resources send villagers to gather, wolves send soldiers to attack."
-        : "Right-click ground to reposition the group, or a wolf to attack it.",
+        ? "Right-click to move; resources send villagers to gather, the enemy camp sends soldiers to attack."
+        : "Right-click ground to reposition the group, or the enemy camp to attack it.",
       unitGrid: kinds.map((k) => ({
         icon: unitIcon(k),
         tooltip: `${unitLabel(k)} — click to select only this one`,
@@ -726,7 +700,7 @@ function buildSelectionInfo(): SelectionInfo | null {
     title: stats.label,
     portrait: unitIcon(kind),
     description:
-      "Right-click ground to reposition it, or a wolf to attack. Holds and defends wherever you send it.",
+      "Right-click ground to reposition it, or the enemy camp to attack. Holds and defends wherever you send it.",
     hp: lead.hp,
     maxHp: stats.maxHp,
     stats: [
@@ -835,22 +809,9 @@ function commandSelectedUnits(sx: number, sy: number) {
   const total = selectedVillagers.length + selectedSoldiers.length;
   if (total === 0) return;
 
-  // Right-clicking a wolf is an attack order for any selected soldiers.
+  // Right-clicking the enemy camp is an attack order for any selected
+  // soldiers — its guards first, then its buildings.
   if (selectedSoldiers.length > 0) {
-    const wolfHit = rtsCamera.raycastObjects(
-      sx,
-      sy,
-      wolves.filter((w) => w.alive).map((w) => w.model),
-    );
-    if (wolfHit) {
-      const wolf = resolveWolfFromHit(wolfHit);
-      if (wolf) {
-        for (const s of selectedSoldiers) s.commandAttack(wolf);
-        return;
-      }
-    }
-
-    // Same for the enemy camp: its guards first, then its buildings.
     const guardHit = rtsCamera.raycastObjects(
       sx,
       sy,
@@ -867,12 +828,13 @@ function commandSelectedUnits(sx: number, sy: number) {
     const enemyBuildingHit = rtsCamera.raycastObjects(
       sx,
       sy,
-      enemyCamp.buildings.filter((b) => b.alive).map((b) => b.model),
+      enemyCamp.townBuildings.list.map((b) => b.mesh),
     );
     if (enemyBuildingHit) {
       const building = resolveEnemyBuildingFromHit(enemyBuildingHit);
       if (building) {
-        for (const s of selectedSoldiers) s.commandAttack(building);
+        const target = wrapCampBuilding(enemyCamp, building, inventory, scene, effects);
+        for (const s of selectedSoldiers) s.commandAttack(target);
         return;
       }
     }
@@ -1056,27 +1018,9 @@ rtsCamera.setOnBoxSelect((rect, final) => {
   }
 });
 
-// Wolves spawn in escalating waves and beeline for the nearest building —
-// walls and towers are the town's only defense (no player avatar to fight).
-let wolves: Wolf[] = [];
-// Give a fresh town time to gather a first tower/wall before anything
-// attacks — previously the first wave hit at 30s, often before players
-// even understood defenses existed, which could end the run outright.
-let nextWaveAt = 75;
-const WAVE_INTERVAL = 45;
-
-function spawnWave() {
-  waveNumber++;
-  const count = 1 + waveNumber;
-  for (let i = 0; i < count; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const dist = 60 + Math.random() * 40;
-    const x = Math.cos(angle) * dist;
-    const z = Math.sin(angle) * dist;
-    wolves.push(makeWolf(new THREE.Vector3(x, heightAt(x, z), z)));
-  }
-}
-
+/** Damages a player building, used both by the enemy camp's raiders and
+ * (previously) wolves — kept faction-agnostic since it only touches the
+ * player's own townBuildings. */
 function damageBuilding(building: PlacedBuilding, amount: number) {
   const destroyed = townBuildings.damage(building, amount);
   if (destroyed) {
@@ -1118,7 +1062,6 @@ function collectSaveData(): SaveData {
       homeZ: s.getHome().z,
       kind: s.kind,
     })),
-    waveNumber,
   };
 }
 
@@ -1152,7 +1095,10 @@ function animate() {
   effects.update(delta);
   resources.update();
   for (const villager of villagers) villager.update(delta, time);
-  const combatTargets = [...wolves, ...enemyCamp.guards, ...enemyCamp.buildings];
+  const combatTargets = [
+    ...enemyCamp.guards,
+    ...enemyCamp.townBuildings.list.map((b) => wrapCampBuilding(enemyCamp, b, inventory, scene, effects)),
+  ];
   for (const soldier of soldiers) soldier.update(delta, time, combatTargets);
   soldiers = soldiers.filter((s) => {
     if (!s.alive) {
@@ -1166,42 +1112,7 @@ function animate() {
     return true;
   });
 
-  for (const guard of enemyCamp.guards) guard.update(delta, time, soldiers);
-  enemyCamp.guards = enemyCamp.guards.filter((g) => {
-    if (!g.alive) {
-      g.dispose(scene);
-      return false;
-    }
-    return true;
-  });
-
-  for (const building of enemyCamp.buildings) {
-    if (!building.alive || !building.attack || time < building.attackReadyAt) continue;
-    const { range, damage, cooldown } = building.attack;
-    const target = soldiers.find(
-      (s) => s.alive && s.model.position.distanceTo(building.position) <= range,
-    );
-    if (target) {
-      target.takeDamage(damage);
-      building.attackReadyAt = time + cooldown;
-      effects.fireArrow(
-        building.position.clone().add(new THREE.Vector3(0, 2.2, 0)),
-        target.model.position.clone().add(new THREE.Vector3(0, 0.4, 0)),
-      );
-    }
-  }
-  enemyCamp.buildings = enemyCamp.buildings.filter((b) => {
-    if (!b.alive) {
-      scene.remove(b.model);
-      disposeBuildingMesh(b.model);
-      for (const [type, amount] of Object.entries(b.loot) as [ResourceType, number][]) {
-        inventory.add(type, amount);
-      }
-      effects.impact(b.position.clone().add(new THREE.Vector3(0, 1, 0)), 0xffaa33);
-      return false;
-    }
-    return true;
-  });
+  updateEnemyCamp(enemyCamp, scene, effects, delta, time, soldiers, townBuildings, damageBuilding);
 
   for (const producer of producers) {
     const { type, amount, interval } = producer.building.def.produces!;
@@ -1232,9 +1143,8 @@ function animate() {
       time >= building.attackReadyAt
     ) {
       const { range, damage, cooldown } = building.def.attack;
-      const target = wolves.find(
-        (w) =>
-          w.alive && w.model.position.distanceTo(building.position) <= range,
+      const target = enemyCamp.guards.find(
+        (g) => g.alive && g.model.position.distanceTo(building.position) <= range,
       );
       if (target) {
         target.takeDamage(damage);
@@ -1249,27 +1159,12 @@ function animate() {
     }
   }
 
-  if (time >= nextWaveAt) {
-    spawnWave();
-    nextWaveAt = time + WAVE_INTERVAL;
-  }
-  for (const wolf of wolves) {
-    wolf.update(delta, time, townBuildings, damageBuilding);
-  }
-  wolves = wolves.filter((w) => {
-    if (!w.alive) {
-      w.dispose(scene);
-      return false;
-    }
-    return true;
-  });
-
   hud.setTownStats(
     villagers.length,
     townBuildings.list.length,
     soldiers.length,
   );
-  hud.setWaveWarning(nextWaveAt - time, 1 + (waveNumber + 1));
+  hud.setRaidWarning(enemyCamp.raidTimer);
 
   const minimapPoints: { x: number; z: number; color: string; size?: number }[] = [];
   for (const node of resources.nodes) {
@@ -1286,11 +1181,11 @@ function animate() {
   for (const s of soldiers) {
     minimapPoints.push({ x: s.model.position.x, z: s.model.position.z, color: "#ffcc55", size: 3 });
   }
-  for (const w of wolves) {
-    minimapPoints.push({ x: w.model.position.x, z: w.model.position.z, color: "#e05a5a", size: 3 });
-  }
-  for (const b of enemyCamp.buildings) {
+  for (const b of enemyCamp.townBuildings.list) {
     minimapPoints.push({ x: b.position.x, z: b.position.z, color: "#7a2a2a", size: 6 });
+  }
+  for (const v of enemyCamp.villagers) {
+    minimapPoints.push({ x: v.model.position.x, z: v.model.position.z, color: "#c47a5a", size: 3 });
   }
   for (const g of enemyCamp.guards) {
     minimapPoints.push({ x: g.model.position.x, z: g.model.position.z, color: "#c23b3b", size: 3 });
@@ -1337,9 +1232,6 @@ window.__game = {
   get soldiers() {
     return soldiers;
   },
-  get wolves() {
-    return wolves;
-  },
   get buildings() {
     return townBuildings.list;
   },
@@ -1353,9 +1245,6 @@ window.__game = {
   get resources() {
     return inventory.getAll();
   },
-  get wave() {
-    return { waveNumber, nextWaveAt, now: clock.getElapsedTime() };
-  },
   get enemyCamp() {
     return enemyCamp;
   },
@@ -1366,10 +1255,13 @@ window.__game = {
       resources: inventory.getAll(),
       villagers: villagers.length,
       soldiers: soldiers.length,
-      wolves: wolves.filter((w) => w.alive).length,
       enemyCamp: {
-        buildingsLeft: enemyCamp.buildings.length,
-        guardsLeft: enemyCamp.guards.length,
+        resources: enemyCamp.inventory.getAll(),
+        buildings: enemyCamp.townBuildings.list.length,
+        villagers: enemyCamp.villagers.length,
+        guards: enemyCamp.guards.length,
+        raidingGuards: enemyCamp.guards.filter((g) => g.isRaiding).length,
+        raidTimer: +enemyCamp.raidTimer.toFixed(1),
       },
       selected: {
         villagers: selectedVillagers.length,

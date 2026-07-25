@@ -39,7 +39,6 @@ export interface SaveData {
   buildings: SavedBuilding[];
   villagers: SavedVillager[];
   soldiers: SavedSoldier[];
-  waveNumber: number;
 }
 
 export function saveGame(data: SaveData) {

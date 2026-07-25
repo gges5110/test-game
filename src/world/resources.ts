@@ -15,6 +15,22 @@ export interface ResourceNode {
   reserved: boolean;
 }
 
+/**
+ * What a Villager needs from wherever it gathers — satisfied by
+ * ResourceManager (the shared map-wide node field) and equally by a small
+ * standalone patch, e.g. the enemy camp's own local resources. Keeping
+ * Villager coded against this instead of the concrete class is what lets
+ * both economies reuse the exact same unit.
+ */
+export interface GatherSource {
+  findNearestAvailable(from: THREE.Vector3, maxDist: number): ResourceNode | null;
+  reserve(node: ResourceNode): void;
+  release(node: ResourceNode): void;
+  gather(node: ResourceNode): ResourceType;
+  /** Ticks respawn timers; called once per frame. */
+  update(): void;
+}
+
 const GATHER_RANGE = 2.5;
 const RESPAWN_SECONDS = 20;
 const NODE_COUNT_PER_TYPE = 140;

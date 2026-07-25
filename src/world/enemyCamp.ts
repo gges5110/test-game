@@ -1,26 +1,40 @@
 import * as THREE from "three";
 import { heightAt } from "./terrain";
-import { createBuildingMesh } from "./buildings";
+import {
+  createBuildingMesh,
+  captureStructureMeshes,
+  setConstructionAppearance,
+  disposeBuildingMesh,
+} from "./buildings";
 import { createHealthBar, type HealthBar } from "./healthBar";
+import { Villager } from "./villager";
 import type { Soldier } from "./soldier";
 import type { Combatant } from "./combatant";
-import type { ResourceType } from "./resources";
+import type { GatherSource, ResourceNode, ResourceType } from "./resources";
+import type { Effects } from "./effects";
+import { Inventory } from "../systems/inventory";
+import { BuildManager, getBuildingDef } from "../systems/building";
+import { TownBuildings, type PlacedBuilding } from "../systems/townBuildings";
+import { enqueueUnit, advanceProduction, contributeBuild } from "../systems/production";
 
 const GUARD_MAX_HP = 50;
 const GUARD_SPEED = 2.2;
 const GUARD_ATTACK_RANGE = 1.4;
 const GUARD_ATTACK_DAMAGE = 12;
 const GUARD_ATTACK_COOLDOWN = 1.0;
+/** How far a *patrolling* guard will chase a soldier from its home before
+ * giving up — a raiding guard (deliberately far from home) ignores this. */
 const GUARD_LEASH_RANGE = 16;
 const GUARD_WANDER_RADIUS = 3;
 const ATTACK_ANIM_TIME = 0.35;
 
 /**
- * A hostile melee unit defending an enemy camp: patrols near home and
- * engages the nearest player soldier that strays within leash range —
- * the mirror image of Soldier's own wolf-engagement logic, seen from the
- * other side. Satisfies Combatant structurally, so player soldiers can
- * target it without any special-casing.
+ * A hostile melee unit defending (or raiding out from) an enemy camp.
+ * Patrols near home and engages the nearest player soldier within leash
+ * range; once sent on a raid it marches toward the player's town instead,
+ * damaging whatever building it reaches, still fighting off any soldier
+ * that intercepts it along the way. Satisfies Combatant structurally, so
+ * player soldiers can target it without any special-casing.
  */
 export class EnemyGuard implements Combatant {
   readonly model: THREE.Group;
@@ -37,6 +51,8 @@ export class EnemyGuard implements Combatant {
   private attackReadyAt = 0;
   private wanderTarget: THREE.Vector3;
   private wanderWaitUntil = 0;
+  private state: "patrol" | "raiding" = "patrol";
+  private raidTarget: THREE.Vector3 | null = null;
 
   constructor(scene: THREE.Scene, home: THREE.Vector3) {
     this.home = home.clone();
@@ -54,11 +70,30 @@ export class EnemyGuard implements Combatant {
     this.syncHealthBarPosition();
   }
 
-  update(delta: number, now: number, soldiers: Soldier[]) {
+  get isRaiding(): boolean {
+    return this.state === "raiding";
+  }
+
+  /** Sent by the camp's raid dispatcher: march toward a point (ignoring the
+   * usual home leash, since raiding is deliberately far from home), damaging
+   * player buildings encountered along the way. Never returns home on its
+   * own — the camp's economy backfills losses over time instead. */
+  commandRaid(target: THREE.Vector3) {
+    this.state = "raiding";
+    this.raidTarget = target.clone();
+  }
+
+  update(
+    delta: number,
+    now: number,
+    soldiers: Soldier[],
+    playerTownBuildings: TownBuildings,
+    damagePlayerBuilding: (building: PlacedBuilding, amount: number) => void,
+  ) {
     if (!this.alive) return;
     this.updateAttackAnim(delta);
 
-    const target = this.findTarget(soldiers);
+    const target = this.findSoldierTarget(soldiers);
     if (target) {
       const dist = this.model.position.distanceTo(target.model.position);
       if (dist > GUARD_ATTACK_RANGE) {
@@ -76,6 +111,12 @@ export class EnemyGuard implements Combatant {
           target.model.position.clone().add(new THREE.Vector3(0, 0.4, 0)),
         );
       }
+      this.syncHealthBarPosition();
+      return;
+    }
+
+    if (this.state === "raiding") {
+      this.updateRaiding(delta, now, playerTownBuildings, damagePlayerBuilding);
       this.syncHealthBarPosition();
       return;
     }
@@ -107,12 +148,14 @@ export class EnemyGuard implements Combatant {
     scene.remove(this.healthBar.group);
   }
 
-  private findTarget(soldiers: Soldier[]): Soldier | null {
+  private findSoldierTarget(soldiers: Soldier[]): Soldier | null {
     let nearest: Soldier | null = null;
     let nearestDist = Infinity;
     for (const soldier of soldiers) {
       if (!soldier.alive) continue;
-      if (this.home.distanceTo(soldier.model.position) > GUARD_LEASH_RANGE) continue;
+      if (this.state === "patrol" && this.home.distanceTo(soldier.model.position) > GUARD_LEASH_RANGE) {
+        continue;
+      }
       const dist = this.model.position.distanceTo(soldier.model.position);
       if (dist < nearestDist) {
         nearestDist = dist;
@@ -120,6 +163,34 @@ export class EnemyGuard implements Combatant {
       }
     }
     return nearest;
+  }
+
+  private updateRaiding(
+    delta: number,
+    now: number,
+    playerTownBuildings: TownBuildings,
+    damagePlayerBuilding: (building: PlacedBuilding, amount: number) => void,
+  ) {
+    const nearestBuilding = playerTownBuildings.findNearest(this.model.position);
+    if (!nearestBuilding) {
+      // Nothing left standing — keep heading for the last known town spot.
+      if (this.raidTarget) this.moveToward(this.raidTarget, delta);
+      return;
+    }
+    const dist = this.model.position.distanceTo(nearestBuilding.position);
+    if (dist > GUARD_ATTACK_RANGE + 0.4) {
+      this.moveToward(nearestBuilding.position, delta);
+      return;
+    }
+    if (now >= this.attackReadyAt) {
+      damagePlayerBuilding(nearestBuilding, GUARD_ATTACK_DAMAGE);
+      this.attackReadyAt = now + GUARD_ATTACK_COOLDOWN;
+      this.attackAnim = 1;
+      this.onAttack?.(
+        this.model.position.clone().add(new THREE.Vector3(0, 1, 0)),
+        nearestBuilding.position.clone().add(new THREE.Vector3(0, 0.5, 0)),
+      );
+    }
   }
 
   private updateAttackAnim(delta: number) {
@@ -187,51 +258,9 @@ function createGuardModel(): THREE.Group {
   return group;
 }
 
-// --- Enemy buildings --------------------------------------------------------
-
-/**
- * A destructible camp structure. Deliberately a plain object (not a class)
- * built by `createEnemyCamp` — the shape alone satisfies Combatant, so no
- * base class or adapter is needed for soldiers to target it.
- */
-export interface EnemyBuilding extends Combatant {
-  position: THREE.Vector3;
-  hp: number;
-  maxHp: number;
-  /** Resources granted to the player's inventory once destroyed. */
-  loot: Partial<Record<ResourceType, number>>;
-  attack?: { range: number; damage: number; cooldown: number };
-  attackReadyAt: number;
-}
-
-interface CampBuildingSpec {
-  id: string;
-  offset: [number, number];
-  maxHp: number;
-  loot: Partial<Record<ResourceType, number>>;
-  attack?: { range: number; damage: number; cooldown: number };
-}
-
-/** Reuses the player's own building visuals — an Outpost as the camp's one
- * defensive tower, two Houses as huts worth looting — rather than modeling
- * a whole second art set for one small camp. */
-const CAMP_LAYOUT: CampBuildingSpec[] = [
-  {
-    id: "outpost",
-    offset: [0, 0],
-    maxHp: 60,
-    loot: { wood: 6, stone: 6 },
-    attack: { range: 6, damage: 8, cooldown: 1.3 },
-  },
-  { id: "house", offset: [-3.2, 2.6], maxHp: 80, loot: { wood: 10 } },
-  { id: "house", offset: [3.2, 2.6], maxHp: 80, loot: { food: 10 } },
-];
-
-const GUARD_COUNT = 3;
-const GUARD_RING_RADIUS = 2.6;
-
-/** Tints a building's structure meshes a dusty red, so an enemy camp reads
- * as hostile at a glance instead of looking like one of the player's own. */
+/** Tints a mesh's structure a dusty red, so an enemy camp (or its villagers/
+ * guards) reads as hostile at a glance instead of looking like the player's
+ * own. */
 function tintHostile(mesh: THREE.Group) {
   mesh.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
@@ -241,55 +270,404 @@ function tintHostile(mesh: THREE.Group) {
   });
 }
 
+// --- Local resource patch ---------------------------------------------------
+
+const PATCH_RESPAWN_SECONDS = 25;
+const PATCH_SPOTS: { type: ResourceType; x: number; z: number }[] = [
+  { type: "wood", x: 6.5, z: -4 },
+  { type: "wood", x: 8, z: -1 },
+  { type: "stone", x: -6.5, z: -3 },
+  { type: "stone", x: -8, z: 0.5 },
+  { type: "food", x: 0, z: -7.5 },
+  { type: "food", x: 2.2, z: -8.5 },
+];
+
+function createPatchNodeMesh(type: ResourceType): THREE.Object3D {
+  if (type === "wood") {
+    const group = new THREE.Group();
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.15, 0.2, 1.4, 6),
+      new THREE.MeshStandardMaterial({ color: 0x5c4326 }),
+    );
+    trunk.position.y = 0.7;
+    group.add(trunk);
+    const foliage = new THREE.Mesh(
+      new THREE.ConeGeometry(0.9, 1.8, 8),
+      new THREE.MeshStandardMaterial({ color: 0x2f6b3a }),
+    );
+    foliage.position.y = 2.1;
+    group.add(foliage);
+    return group;
+  }
+  if (type === "stone") {
+    return new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.5, 0),
+      new THREE.MeshStandardMaterial({ color: 0x8a8378 }),
+    );
+  }
+  const bush = new THREE.Mesh(
+    new THREE.SphereGeometry(0.42, 8, 6),
+    new THREE.MeshStandardMaterial({ color: 0x4a7c3f }),
+  );
+  bush.scale.y = 0.75;
+  bush.position.y = 0.3;
+  return bush;
+}
+
+/**
+ * A tiny standalone resource patch feeding the camp's own villagers —
+ * separate from the player's map-wide ResourceManager (whose clusters sit
+ * within ~42 units of the player's spawn, nowhere near this camp) so the
+ * two economies don't have to fight over placement or instancing capacity.
+ * Satisfies GatherSource, so Villager needs no camp-specific code at all.
+ */
+class LocalResourcePatch implements GatherSource {
+  private nodes: ResourceNode[] = [];
+
+  constructor(scene: THREE.Scene, center: THREE.Vector3) {
+    for (const spot of PATCH_SPOTS) {
+      const x = center.x + spot.x;
+      const z = center.z + spot.z;
+      const position = new THREE.Vector3(x, heightAt(x, z), z);
+      const mesh = createPatchNodeMesh(spot.type);
+      mesh.position.copy(position);
+      scene.add(mesh);
+      this.nodes.push({
+        type: spot.type,
+        position,
+        mesh,
+        depleted: false,
+        respawnAt: 0,
+        reserved: false,
+      });
+    }
+  }
+
+  findNearestAvailable(from: THREE.Vector3, maxDist: number): ResourceNode | null {
+    let nearest: ResourceNode | null = null;
+    let nearestDist = maxDist;
+    for (const node of this.nodes) {
+      if (node.depleted || node.reserved) continue;
+      const dist = from.distanceTo(node.position);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearest = node;
+      }
+    }
+    return nearest;
+  }
+
+  reserve(node: ResourceNode) {
+    node.reserved = true;
+  }
+
+  release(node: ResourceNode) {
+    node.reserved = false;
+  }
+
+  gather(node: ResourceNode): ResourceType {
+    node.depleted = true;
+    node.reserved = false;
+    node.mesh.visible = false;
+    node.respawnAt = performance.now() / 1000 + PATCH_RESPAWN_SECONDS;
+    return node.type;
+  }
+
+  update() {
+    const now = performance.now() / 1000;
+    for (const node of this.nodes) {
+      if (node.depleted && now >= node.respawnAt) {
+        node.depleted = false;
+        node.mesh.visible = true;
+      }
+    }
+  }
+}
+
+// --- The camp itself ---------------------------------------------------------
+
+const STARTING_LAYOUT: { id: string; offset: [number, number] }[] = [
+  { id: "outpost", offset: [0, 0] },
+  { id: "house", offset: [-3.2, 2.6] },
+  { id: "house", offset: [3.2, 2.6] },
+];
+
+/** Extra building sites used once the camp's economy affords growth, kept
+ * separate from the starting layout so new construction can't overlap it. */
+const GROWTH_OFFSETS: [number, number][] = [
+  [-5.8, -2.5],
+  [5.8, -2.5],
+  [0, 5.8],
+  [-5.8, 5.5],
+  [5.8, 5.5],
+];
+
+/** What the camp tries to build next, in order, each capped so growth stays
+ * bounded rather than sprawling forever. Reuses the player's own building
+ * catalog — a barracks trains guards exactly the way it trains the player's
+ * soldiers, just via a second BuildManager/Inventory/TownBuildings scoped to
+ * the camp. */
+const GROWTH_BUILD_ORDER: { id: string; cap: number }[] = [
+  { id: "house", cap: 3 },
+  { id: "barracks", cap: 1 },
+  { id: "outpost", cap: 2 },
+  { id: "barracks", cap: 2 },
+];
+
+const RAID_INTERVAL = 60;
+const RAID_PARTY_SIZE = 2;
+/** Always keep at least this many patrol guards home defending the camp —
+ * a raid only launches with whatever's left over. */
+const RAID_MIN_HOME_GUARDS = 1;
+
 export interface EnemyCamp {
-  buildings: EnemyBuilding[];
+  townBuildings: TownBuildings;
+  inventory: Inventory;
+  buildManager: BuildManager;
+  villagers: Villager[];
   guards: EnemyGuard[];
+  center: THREE.Vector3;
+  /** Seconds remaining until the next raid attempt; exposed for the HUD. */
+  raidTimer: number;
+  /** The camp's own gather source, feeding its villagers — not part of the
+   * player's map-wide ResourceManager. Internal to this module's update
+   * loop; main.ts never needs to touch it directly. */
+  resourcePatch: GatherSource;
+}
+
+function spawnCampVillager(camp: EnemyCamp, at: THREE.Vector3, scene: THREE.Scene): Villager {
+  const villager = new Villager(scene, at, camp.resourcePatch, camp.inventory, () => 0, (site, delta) => {
+    const building = site as PlacedBuilding;
+    const completed = contributeBuild(building, delta);
+    setConstructionAppearance(building.mesh, building.buildProgress);
+    if (completed) {
+      setConstructionAppearance(building.mesh, 1);
+      if (building.type === "house") {
+        camp.villagers.push(spawnCampVillager(camp, building.position, scene));
+      }
+    }
+  });
+  tintHostile(villager.model);
+  return villager;
+}
+
+function spawnCampGuard(at: THREE.Vector3, scene: THREE.Scene, effects: Effects): EnemyGuard {
+  const guard = new EnemyGuard(scene, at);
+  guard.onAttack = (_from, to) => {
+    effects.slash(to, guard.model.rotation.y, 0xff8a8a);
+    effects.impact(to, 0xd66a4a);
+  };
+  return guard;
 }
 
 /** Builds one fixed hostile camp: a tower and two huts guarded by a few
- * melee guards, all placed around `center`. */
-export function createEnemyCamp(scene: THREE.Scene, center: THREE.Vector3): EnemyCamp {
-  const buildings: EnemyBuilding[] = [];
+ * melee guards, plus its own small economy (villagers, resource patch,
+ * inventory) that grows the camp over time by actually gathering and
+ * building — not a scripted/timed expansion. */
+export function createEnemyCamp(scene: THREE.Scene, center: THREE.Vector3, effects: Effects): EnemyCamp {
+  const inventory = new Inventory();
+  const buildManager = new BuildManager(inventory);
+  const townBuildings = new TownBuildings();
+  // The camp has no visible Town Center — this only satisfies the
+  // requiresTownCenter gate other buildings check, since the camp
+  // conceptually already has a base (the Outpost serves as its keep).
+  buildManager.grant("town_center");
 
-  for (const spec of CAMP_LAYOUT) {
-    const x = center.x + spec.offset[0];
-    const z = center.z + spec.offset[1];
-    const position = new THREE.Vector3(x, heightAt(x, z), z);
-    const mesh = createBuildingMesh(spec.id);
-    mesh.position.copy(position);
+  for (const spot of STARTING_LAYOUT) {
+    const x = center.x + spot.offset[0];
+    const z = center.z + spot.offset[1];
+    const def = getBuildingDef(spot.id);
+    const mesh = createBuildingMesh(spot.id);
+    mesh.position.set(x, heightAt(x, z), z);
+    captureStructureMeshes(mesh);
+    tintHostile(mesh);
+    scene.add(mesh);
+    townBuildings.add(spot.id, def, mesh, mesh.position);
+    buildManager.grant(spot.id);
+  }
+
+  const patch = new LocalResourcePatch(scene, center);
+
+  const camp: EnemyCamp = {
+    townBuildings,
+    inventory,
+    buildManager,
+    villagers: [],
+    guards: [],
+    center: center.clone(),
+    raidTimer: RAID_INTERVAL,
+    resourcePatch: patch,
+  };
+
+  for (let i = 0; i < 2; i++) {
+    const angle = (i / 2) * Math.PI * 2;
+    const x = center.x + Math.cos(angle) * 2;
+    const z = center.z + Math.sin(angle) * 2;
+    camp.villagers.push(
+      spawnCampVillager(camp, new THREE.Vector3(x, heightAt(x, z), z), scene),
+    );
+  }
+
+  const guardCount = 3;
+  const guardRingRadius = 2.6;
+  for (let i = 0; i < guardCount; i++) {
+    const angle = (i / guardCount) * Math.PI * 2;
+    const x = center.x + Math.cos(angle) * guardRingRadius;
+    const z = center.z + Math.sin(angle) * guardRingRadius;
+    camp.guards.push(spawnCampGuard(new THREE.Vector3(x, heightAt(x, z), z), scene, effects));
+  }
+
+  return camp;
+}
+
+/** Picks the next unclaimed growth building site, spreading them across the
+ * fixed offsets before ever reusing one (never happens in practice, given
+ * GROWTH_BUILD_ORDER's caps total fewer sites than offsets available). */
+function nextGrowthOffset(camp: EnemyCamp): [number, number] {
+  const extraIndex = Math.max(0, camp.townBuildings.list.length - STARTING_LAYOUT.length);
+  return GROWTH_OFFSETS[extraIndex % GROWTH_OFFSETS.length];
+}
+
+/** The camp's "build brain": if nothing is currently under construction and
+ * an idle villager is free, starts the next affordable building in the
+ * growth order. Entirely gated on the camp's own gathered resources and
+ * villager availability — never spawns anything for free. */
+function tryStartGrowth(camp: EnemyCamp, scene: THREE.Scene) {
+  const alreadyBuilding = camp.townBuildings.list.some((b) => b.underConstruction);
+  if (alreadyBuilding) return;
+  const idleVillager = camp.villagers.find((v) => v.isIdle);
+  if (!idleVillager) return;
+
+  for (const { id, cap } of GROWTH_BUILD_ORDER) {
+    if (camp.buildManager.countBuilt(id) >= cap) continue;
+    const def = getBuildingDef(id);
+    if (!camp.buildManager.canBuild(def)) continue;
+
+    camp.buildManager.build(def);
+    const [ox, oz] = nextGrowthOffset(camp);
+    const x = camp.center.x + ox;
+    const z = camp.center.z + oz;
+    const mesh = createBuildingMesh(id);
+    mesh.position.set(x, heightAt(x, z), z);
+    captureStructureMeshes(mesh);
     tintHostile(mesh);
     scene.add(mesh);
 
-    const building: EnemyBuilding = {
-      model: mesh,
-      position,
-      hp: spec.maxHp,
-      maxHp: spec.maxHp,
-      alive: true,
-      loot: spec.loot,
-      attack: spec.attack,
-      attackReadyAt: 0,
-      takeDamage(amount: number): boolean {
-        if (!this.alive) return false;
-        this.hp = Math.max(0, this.hp - amount);
-        if (this.hp <= 0) {
-          this.alive = false;
-          return true;
+    const placed = camp.townBuildings.add(id, def, mesh, mesh.position);
+    placed.underConstruction = true;
+    placed.buildProgress = 0;
+    placed.hp = Math.max(1, placed.maxHp * 0.05);
+    setConstructionAppearance(mesh, 0);
+
+    idleVillager.commandBuild(placed);
+    return;
+  }
+}
+
+/** Keeps a light, steady trickle of production going on any finished camp
+ * building that trains something, instead of ever stockpiling a deep queue —
+ * matches the "grow gradually" spirit better than instantly maxing a queue
+ * the moment resources allow. */
+function tryQueueTraining(camp: EnemyCamp) {
+  for (const building of camp.townBuildings.list) {
+    if (building.underConstruction || !building.def.trains) continue;
+    if (building.queue.length >= 1) continue;
+    enqueueUnit(building, camp.inventory);
+  }
+}
+
+/** Every RAID_INTERVAL seconds, peels off up to RAID_PARTY_SIZE patrol
+ * guards (beyond a defensive floor) and sends them at the player's town. If
+ * the camp hasn't grown enough to spare anyone, the raid simply fizzles —
+ * there's no scripted fallback spawn. */
+function tryDispatchRaid(camp: EnemyCamp, delta: number, playerTownCenter: THREE.Vector3 | null) {
+  camp.raidTimer -= delta;
+  if (camp.raidTimer > 0) return;
+  camp.raidTimer = RAID_INTERVAL;
+  if (!playerTownCenter) return;
+
+  const patrolling = camp.guards.filter((g) => g.alive && !g.isRaiding);
+  const available = patrolling.length - RAID_MIN_HOME_GUARDS;
+  if (available <= 0) return;
+
+  const partySize = Math.min(RAID_PARTY_SIZE, available);
+  for (let i = 0; i < partySize; i++) {
+    patrolling[i].commandRaid(playerTownCenter);
+  }
+}
+
+/** Advances the whole camp by one tick: villagers gather/build, guards
+ * patrol/raid/fight, buildings train and (rarely) construct, and the raid
+ * timer counts down. Called once per frame from main's animate loop. */
+export function updateEnemyCamp(
+  camp: EnemyCamp,
+  scene: THREE.Scene,
+  effects: Effects,
+  delta: number,
+  now: number,
+  playerSoldiers: Soldier[],
+  playerTownBuildings: TownBuildings,
+  damagePlayerBuilding: (building: PlacedBuilding, amount: number) => void,
+) {
+  camp.resourcePatch.update();
+
+  for (const villager of camp.villagers) villager.update(delta, now);
+
+  for (const guard of camp.guards) {
+    guard.update(delta, now, playerSoldiers, playerTownBuildings, damagePlayerBuilding);
+  }
+  camp.guards = camp.guards.filter((g) => {
+    if (!g.alive) {
+      g.dispose(scene);
+      return false;
+    }
+    return true;
+  });
+
+  for (const building of camp.townBuildings.list) {
+    const finished = advanceProduction(building, now);
+    if (!finished) continue;
+    if (finished === "villager") {
+      camp.villagers.push(spawnCampVillager(camp, building.position, scene));
+    } else {
+      camp.guards.push(spawnCampGuard(building.position, scene, effects));
+    }
+  }
+
+  tryStartGrowth(camp, scene);
+  tryQueueTraining(camp);
+
+  const playerTownCenter = playerTownBuildings.list.find((b) => b.type === "town_center");
+  tryDispatchRaid(camp, delta, playerTownCenter ? playerTownCenter.position : null);
+}
+
+/** Wraps a camp building as a Combatant so player soldiers can target it
+ * like any other hostile — destruction grants the player half the
+ * building's original cost back as loot and disposes its mesh. */
+export function wrapCampBuilding(
+  camp: EnemyCamp,
+  building: PlacedBuilding,
+  playerInventory: Inventory,
+  scene: THREE.Scene,
+  effects: Effects,
+): Combatant {
+  return {
+    model: building.mesh,
+    get alive() {
+      return camp.townBuildings.list.includes(building);
+    },
+    takeDamage(amount: number): boolean {
+      if (!camp.townBuildings.list.includes(building)) return false;
+      const destroyed = camp.townBuildings.damage(building, amount);
+      if (destroyed) {
+        camp.townBuildings.remove(building, scene);
+        disposeBuildingMesh(building.mesh);
+        for (const [type, cost] of Object.entries(building.def.cost) as [ResourceType, number][]) {
+          playerInventory.add(type, Math.ceil(cost / 2));
         }
-        return false;
-      },
-    };
-    mesh.userData.enemyBuilding = building;
-    buildings.push(building);
-  }
-
-  const guards: EnemyGuard[] = [];
-  for (let i = 0; i < GUARD_COUNT; i++) {
-    const angle = (i / GUARD_COUNT) * Math.PI * 2;
-    const x = center.x + Math.cos(angle) * GUARD_RING_RADIUS;
-    const z = center.z + Math.sin(angle) * GUARD_RING_RADIUS;
-    guards.push(new EnemyGuard(scene, new THREE.Vector3(x, heightAt(x, z), z)));
-  }
-
-  return { buildings, guards };
+        effects.impact(building.position.clone().add(new THREE.Vector3(0, 1, 0)), 0xffaa33);
+      }
+      return destroyed;
+    },
+  };
 }

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { heightAt } from "./terrain";
-import type { ResourceManager, ResourceNode, ResourceType } from "./resources";
+import type { GatherSource, ResourceNode, ResourceType } from "./resources";
 import type { Inventory } from "../systems/inventory";
 
 /** Matches the minimap's resource-node colors, so a carried resource reads
@@ -53,7 +53,7 @@ export class Villager {
   constructor(
     scene: THREE.Scene,
     home: THREE.Vector3,
-    private resources: ResourceManager,
+    private resources: GatherSource,
     private inventory: Inventory,
     private getGatherBonus: (type: ResourceType) => number,
     private onBuildTick: (site: ConstructionSite, delta: number) => void = () => {},
@@ -80,6 +80,11 @@ export class Villager {
 
   setSelected(selected: boolean) {
     this.selectionRing.visible = selected;
+  }
+
+  /** Not gathering, building, or under a move order — free to be assigned. */
+  get isIdle(): boolean {
+    return this.state === "idle";
   }
 
   getHome(): THREE.Vector3 {

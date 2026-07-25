@@ -1,6 +1,6 @@
 # Explore & Craft
 
-A browser-based medieval-town RTS with tower-defense combat, built with Three.js. Manage villagers, gather resources, build up a town, and defend it from waves of wolves — no player avatar, pure top-down command.
+A browser-based medieval-town RTS built with Three.js. Manage villagers, gather resources, build up a town, and fight a rival AI camp that grows its own economy and periodically raids you — no player avatar, pure top-down command.
 
 **Play it live:** https://gges5110.github.io/test-game/
 
@@ -18,9 +18,8 @@ A browser-based medieval-town RTS with tower-defense combat, built with Three.js
 ## Gameplay
 
 - Villagers automatically seek nearby resource nodes (wood, stone, food) when idle, or can be directly commanded.
-- The Build menu places Houses (more villagers), Farms (passive food), Storage (capacity), a Blacksmith, Towers (auto-attack wolves in range), Walls, and Campfires.
-- The Craft menu offers one-time tool upgrades that boost gather yield.
-- Wolves spawn in escalating waves and beeline for the nearest building — towers and walls are the only defense.
+- The Build ▸ Economic/Military menu places Houses (more villagers), Farms (passive food), a Blacksmith, Barracks/Archery Range/Stable (train soldiers), Outposts and Castles (auto-attack nearby enemies), and more Town Centers.
+- A fixed enemy camp sits a distance away, running the same economy loop the player does: its own villagers gather from a small local resource patch and build up its own houses/barracks/towers over time. Its guards patrol the camp and periodically raid the player's town — attack the camp to slow its growth, or let it grow and come to you.
 - Progress autosaves to `localStorage` (and on tab close/hide), so reloading resumes your town. Use the reset button in the HUD to wipe the save and start over.
 
 ## Development
@@ -46,7 +45,7 @@ Deployment is automatic: pushes to `main` trigger the GitHub Actions workflow in
 src/
   main.ts              # orchestration: scene setup, game loop, input wiring
   systems/              # camera, building, crafting, inventory, save/load
-  world/                # terrain, resources, villagers, wolves, buildings
+  world/                # terrain, resources, villagers, enemy camp, buildings
   ui/                    # HUD (inventory, menus, prompts)
 ```
 
@@ -74,5 +73,5 @@ autosave interval):
 __game.summary()    // compact snapshot: resources, unit counts, every building
 __game.buildings    // live PlacedBuilding objects
 __game.selection    // what's currently selected
-__game.wave         // wave number and time until the next one
+__game.enemyCamp    // the rival camp: its buildings, villagers, guards, resources, raid timer
 ```

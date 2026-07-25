@@ -11,6 +11,7 @@ import { Crafting } from "./systems/crafting";
 import { BuildManager, type BuildingDef } from "./systems/building";
 import { createLighting } from "./systems/lighting";
 import { Hud } from "./ui/hud";
+import { setupTouchControls } from "./ui/touchControls";
 
 const canvas = document.getElementById("view") as HTMLCanvasElement;
 const hudRoot = document.getElementById("hud") as HTMLElement;
@@ -50,6 +51,7 @@ const inventory = new Inventory();
 const buildManager = new BuildManager(inventory);
 const crafting = new Crafting(inventory, buildManager);
 const hud = new Hud(hudRoot, inventory, crafting, buildManager);
+const touchControls = setupTouchControls(document.body);
 
 // Starting kit so new players can try crafting/building immediately.
 crafting.grant("torch", 1);
@@ -119,12 +121,14 @@ hud.setOnSelectBuilding((building) => {
   selectedBuilding = building;
   ghost = makeGhost(createBuildingMesh(building.id));
   scene.add(ghost);
+  touchControls?.setPlacementMode(true);
 });
 
 function cancelPlacement() {
   if (ghost) scene.remove(ghost);
   ghost = null;
   selectedBuilding = null;
+  touchControls?.setPlacementMode(false);
 }
 
 function confirmPlacement() {

@@ -19,6 +19,7 @@ export class PlayerController {
   private cameraYaw = Math.PI;
   private cameraPitch = 0.5;
   private dragging = false;
+  private dragPointerId: number | null = null;
   private lastPointer = { x: 0, y: 0 };
 
   private verticalVelocity = 0;
@@ -41,11 +42,16 @@ export class PlayerController {
 
     domElement.addEventListener("pointerdown", (e) => {
       this.dragging = true;
+      this.dragPointerId = e.pointerId;
       this.lastPointer = { x: e.clientX, y: e.clientY };
     });
-    window.addEventListener("pointerup", () => (this.dragging = false));
+    window.addEventListener("pointerup", (e) => {
+      if (e.pointerId !== this.dragPointerId) return;
+      this.dragging = false;
+      this.dragPointerId = null;
+    });
     window.addEventListener("pointermove", (e) => {
-      if (!this.dragging) return;
+      if (!this.dragging || e.pointerId !== this.dragPointerId) return;
       const dx = e.clientX - this.lastPointer.x;
       const dy = e.clientY - this.lastPointer.y;
       this.lastPointer = { x: e.clientX, y: e.clientY };

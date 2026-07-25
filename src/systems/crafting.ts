@@ -18,28 +18,16 @@ export const RECIPES: Recipe[] = [
     id: "basic_tool",
     name: "Basic Tool",
     cost: { wood: 2, stone: 2 },
-    description: "+1 wood/stone per gather",
+    description: "+1 wood/stone per villager gather",
     maxOwned: 1,
   },
   {
     id: "iron_tool",
     name: "Iron Tool",
     cost: { wood: 3, stone: 4 },
-    description: "+2 wood/stone per gather (needs Blacksmith)",
+    description: "+2 wood/stone per villager gather (needs Blacksmith)",
     maxOwned: 1,
     requiresBuilding: "blacksmith",
-  },
-  {
-    id: "torch",
-    name: "Torch",
-    cost: { wood: 2, fiber: 1 },
-    description: "Press T to equip/unequip a light",
-  },
-  {
-    id: "campfire",
-    name: "Campfire",
-    cost: { wood: 4, stone: 3 },
-    description: "Press F to place a light + landmark",
   },
 ];
 
@@ -75,25 +63,13 @@ export class Crafting {
     return true;
   }
 
-  /** Grants an already-crafted item for free (e.g. starting kit). */
-  grant(recipeId: string, amount = 1) {
-    this.crafted[recipeId] = (this.crafted[recipeId] ?? 0) + amount;
-  }
-
-  /** Consumes one crafted+owned unit (e.g. placing a campfire). */
-  consumeCrafted(recipeId: string): boolean {
-    if ((this.crafted[recipeId] ?? 0) <= 0) return false;
-    this.crafted[recipeId] -= 1;
-    return true;
-  }
-
   countOf(recipeId: string): number {
     return this.crafted[recipeId] ?? 0;
   }
 
   /** Owning a tool boosts wood/stone yield per gather; Iron Tool supersedes Basic Tool. */
   gatherBonus(type: ResourceType): number {
-    if (type === "fiber" || type === "food") return 0;
+    if (type === "food") return 0;
     if (this.countOf("iron_tool") > 0) return 2;
     if (this.countOf("basic_tool") > 0) return 1;
     return 0;

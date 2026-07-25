@@ -8,7 +8,6 @@ export class Inventory {
   private counts: Record<ResourceType, number> = {
     wood: 0,
     stone: 0,
-    fiber: 0,
     food: 0,
   };
   private capacityBonus = 0;

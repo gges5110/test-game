@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { heightAt, WORLD_SIZE } from "./terrain";
+import { heightAt } from "./terrain";
 
-export type ResourceType = "wood" | "stone" | "fiber" | "food";
+export type ResourceType = "wood" | "stone" | "food";
 
 export interface ResourceNode {
   type: ResourceType;
@@ -17,6 +17,10 @@ const GATHER_RANGE = 2.5;
 const RESPAWN_SECONDS = 20;
 const NODE_COUNT_PER_TYPE = 140;
 const PLACEMENT_SEED = 9001;
+const CLUSTERS_PER_TYPE = 8;
+const CLUSTER_RADIUS = 12;
+const MIN_CLUSTER_DIST_FROM_SPAWN = 12;
+const MAX_CLUSTER_DIST_FROM_SPAWN = 42;
 
 function mulberry32(seed: number) {
   let a = seed;
@@ -88,36 +92,57 @@ export class ResourceManager {
 
   private placeNodes() {
     const rng = mulberry32(PLACEMENT_SEED);
-    const types: ResourceType[] = ["wood", "stone", "fiber"];
+    const types: ResourceType[] = ["wood", "stone", "food"];
 
     for (const type of types) {
+      const nodesPerCluster = Math.ceil(NODE_COUNT_PER_TYPE / CLUSTERS_PER_TYPE);
       let placed = 0;
-      let attempts = 0;
-      while (placed < NODE_COUNT_PER_TYPE && attempts < NODE_COUNT_PER_TYPE * 20) {
-        attempts++;
-        const x = (rng() - 0.5) * WORLD_SIZE * 0.9;
-        const z = (rng() - 0.5) * WORLD_SIZE * 0.9;
-        const distFromSpawn = Math.sqrt(x * x + z * z);
-        if (distFromSpawn < 8) continue; // keep spawn clear
 
-        const y = heightAt(x, z);
-        const slope =
-          Math.abs(heightAt(x + 1, z) - y) + Math.abs(heightAt(x, z + 1) - y);
-        if (slope > 0.5) continue; // avoid steep terrain
+      for (let c = 0; c < CLUSTERS_PER_TYPE && placed < NODE_COUNT_PER_TYPE; c++) {
+        const centerAngle = rng() * Math.PI * 2;
+        const centerDist =
+          MIN_CLUSTER_DIST_FROM_SPAWN +
+          rng() * (MAX_CLUSTER_DIST_FROM_SPAWN - MIN_CLUSTER_DIST_FROM_SPAWN);
+        const cx = Math.cos(centerAngle) * centerDist;
+        const cz = Math.sin(centerAngle) * centerDist;
 
-        const mesh = meshFactory(type);
-        mesh.position.set(x, y, z);
-        this.scene.add(mesh);
+        let clusterPlaced = 0;
+        let clusterAttempts = 0;
+        while (
+          clusterPlaced < nodesPerCluster &&
+          placed < NODE_COUNT_PER_TYPE &&
+          clusterAttempts < nodesPerCluster * 15
+        ) {
+          clusterAttempts++;
+          const angle = rng() * Math.PI * 2;
+          const radius = rng() * CLUSTER_RADIUS;
+          const x = cx + Math.cos(angle) * radius;
+          const z = cz + Math.sin(angle) * radius;
+          const distFromSpawn = Math.sqrt(x * x + z * z);
+          if (distFromSpawn < 8) continue; // keep spawn clear
 
-        this.nodes.push({
-          type,
-          position: new THREE.Vector3(x, y, z),
-          mesh,
-          depleted: false,
-          respawnAt: 0,
-          reserved: false,
-        });
-        placed++;
+          const y = heightAt(x, z);
+          const slope =
+            Math.abs(heightAt(x + 1, z) - y) + Math.abs(heightAt(x, z + 1) - y);
+          if (slope > 0.5) continue; // avoid steep terrain
+
+          const mesh = meshFactory(type);
+          mesh.position.set(x, y, z);
+          this.scene.add(mesh);
+
+          const node: ResourceNode = {
+            type,
+            position: new THREE.Vector3(x, y, z),
+            mesh,
+            depleted: false,
+            respawnAt: 0,
+            reserved: false,
+          };
+          mesh.userData.resourceNode = node;
+          this.nodes.push(node);
+          clusterPlaced++;
+          placed++;
+        }
       }
     }
   }

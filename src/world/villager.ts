@@ -9,13 +9,16 @@ const SPEED = 1.6;
 const ARRIVE_DIST = 0.3;
 const GATHER_DURATION = 1.2;
 
-type State = "idle" | "toResource" | "gathering" | "toHome";
+type State = "idle" | "toResource" | "gathering" | "toHome" | "moving";
 
 export class Villager {
   readonly model: THREE.Group;
   private home: THREE.Vector3;
   private wanderTarget: THREE.Vector3;
   private wanderWaitUntil = 0;
+  private moveTarget = new THREE.Vector3();
+  private selectionRing: THREE.Mesh;
+  private workIndicator: THREE.Mesh;
 
   private state: State = "idle";
   private targetNode: ResourceNode | null = null;
@@ -27,15 +30,46 @@ export class Villager {
     home: THREE.Vector3,
     private resources: ResourceManager,
     private inventory: Inventory,
+    private getGatherBonus: (type: ResourceType) => number,
   ) {
     this.home = home.clone();
     this.wanderTarget = home.clone();
     this.model = createVillagerModel();
     this.model.position.copy(home);
+    this.model.userData.villager = this;
     scene.add(this.model);
+
+    this.selectionRing = createSelectionRing();
+    this.selectionRing.visible = false;
+    this.model.add(this.selectionRing);
+
+    this.workIndicator = createWorkIndicator();
+    this.workIndicator.visible = false;
+    this.model.add(this.workIndicator);
+  }
+
+  setSelected(selected: boolean) {
+    this.selectionRing.visible = selected;
+  }
+
+  /** Player-issued: walk to a point, then resume normal idle behavior. */
+  commandMoveTo(point: THREE.Vector3) {
+    this.releaseJob();
+    this.moveTarget.copy(point);
+    this.state = "moving";
+  }
+
+  /** Player-issued: go gather a specific node, overriding auto job search. */
+  commandGather(node: ResourceNode) {
+    if (node.depleted) return;
+    this.releaseJob();
+    this.resources.reserve(node);
+    this.targetNode = node;
+    this.state = "toResource";
   }
 
   update(delta: number, now: number) {
+    this.workIndicator.visible = this.state === "gathering";
     switch (this.state) {
       case "toResource":
         this.updateToResource(delta, now);
@@ -46,8 +80,18 @@ export class Villager {
       case "toHome":
         this.updateToHome(delta);
         return;
+      case "moving":
+        this.updateMoving(delta);
+        return;
       default:
         this.updateIdle(delta, now);
+    }
+  }
+
+  private updateMoving(delta: number) {
+    this.moveToward(this.moveTarget, delta);
+    if (this.model.position.distanceTo(this.moveTarget) <= ARRIVE_DIST) {
+      this.state = "idle";
     }
   }
 
@@ -64,6 +108,9 @@ export class Villager {
   }
 
   private updateGathering(now: number) {
+    this.workIndicator.position.y = 1.55 + Math.sin(now * 9) * 0.1;
+    this.workIndicator.rotation.y = now * 4;
+
     if (now < this.gatherEndsAt) return;
     if (this.targetNode && !this.targetNode.depleted) {
       this.carrying = this.resources.gather(this.targetNode);
@@ -76,7 +123,8 @@ export class Villager {
     this.moveToward(this.home, delta);
     if (this.model.position.distanceTo(this.home) <= ARRIVE_DIST) {
       if (this.carrying) {
-        this.inventory.add(this.carrying, 1);
+        const bonus = this.getGatherBonus(this.carrying);
+        this.inventory.add(this.carrying, 1 + bonus);
         this.carrying = null;
       }
       this.state = "idle";
@@ -101,9 +149,13 @@ export class Villager {
   }
 
   private abandonJob() {
+    this.releaseJob();
+    this.state = "idle";
+  }
+
+  private releaseJob() {
     if (this.targetNode) this.resources.release(this.targetNode);
     this.targetNode = null;
-    this.state = "idle";
   }
 
   private moveToward(point: THREE.Vector3, delta: number) {
@@ -126,6 +178,27 @@ export class Villager {
     this.wanderTarget.set(x, heightAt(x, z), z);
     this.wanderWaitUntil = now + 2 + Math.random() * 3;
   }
+}
+
+function createWorkIndicator(): THREE.Mesh {
+  return new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.14, 0),
+    new THREE.MeshStandardMaterial({
+      color: 0xffd23f,
+      emissive: 0xffaa00,
+      emissiveIntensity: 1.2,
+    }),
+  );
+}
+
+function createSelectionRing(): THREE.Mesh {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.4, 0.5, 24),
+    new THREE.MeshBasicMaterial({ color: 0x6fe3ff, side: THREE.DoubleSide }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  return ring;
 }
 
 function createVillagerModel(): THREE.Group {

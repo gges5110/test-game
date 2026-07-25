@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createHealthBar, type HealthBar } from "./healthBar";
 
 function createHouseMesh(): THREE.Group {
   const group = new THREE.Group();
@@ -136,13 +137,104 @@ function createWallMesh(): THREE.Group {
   return group;
 }
 
+function createTowerMesh(): THREE.Group {
+  const group = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x9a9086 });
+
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 2.6, 8), stoneMat);
+  shaft.position.y = 1.3;
+  shaft.castShadow = true;
+  shaft.receiveShadow = true;
+  group.add(shaft);
+
+  const crownMat = new THREE.MeshStandardMaterial({ color: 0x7a746a });
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const battlement = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.3, 0.25), crownMat);
+    battlement.position.set(Math.cos(angle) * 0.72, 2.75, Math.sin(angle) * 0.72);
+    battlement.castShadow = true;
+    group.add(battlement);
+  }
+
+  const lantern = new THREE.Mesh(
+    new THREE.SphereGeometry(0.2, 8, 8),
+    new THREE.MeshStandardMaterial({
+      color: 0xffcc66,
+      emissive: 0xff9922,
+      emissiveIntensity: 1.2,
+    }),
+  );
+  lantern.position.y = 2.9;
+  group.add(lantern);
+
+  return group;
+}
+
+function createCampfireMesh(): THREE.Group {
+  const group = new THREE.Group();
+  const logMat = new THREE.MeshStandardMaterial({ color: 0x4a3323 });
+  for (let i = 0; i < 4; i++) {
+    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.9, 5), logMat);
+    log.rotation.z = Math.PI / 2;
+    log.rotation.y = (i / 4) * Math.PI * 2;
+    log.position.y = 0.12;
+    log.castShadow = true;
+    group.add(log);
+  }
+
+  const flame = new THREE.Mesh(
+    new THREE.ConeGeometry(0.18, 0.5, 8),
+    new THREE.MeshStandardMaterial({
+      color: 0xff8c30,
+      emissive: 0xff5500,
+      emissiveIntensity: 1.5,
+    }),
+  );
+  flame.position.y = 0.4;
+  group.add(flame);
+
+  const light = new THREE.PointLight(0xff9a4a, 3.5, 12, 2);
+  light.position.y = 0.6;
+  group.add(light);
+
+  group.userData.flame = flame;
+  group.userData.light = light;
+  return group;
+}
+
 export function createBuildingMesh(id: string): THREE.Group {
   if (id === "house") return createHouseMesh();
   if (id === "storage") return createStorageMesh();
   if (id === "town_center") return createTownCenterMesh();
   if (id === "farm") return createFarmMesh();
   if (id === "blacksmith") return createBlacksmithMesh();
+  if (id === "tower") return createTowerMesh();
+  if (id === "campfire") return createCampfireMesh();
   return createWallMesh();
+}
+
+/** Adds a hidden selection ring to a building mesh; toggle `.visible` on it. */
+export function attachSelectionRing(mesh: THREE.Group): THREE.Mesh {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(1.95, 2.15, 28),
+    new THREE.MeshBasicMaterial({ color: 0xffcc44, side: THREE.DoubleSide }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.04;
+  ring.visible = false;
+  mesh.add(ring);
+  mesh.userData.selectionRing = ring;
+  return ring;
+}
+
+/** Adds a health bar above a building mesh, sized to clear its bounding box. */
+export function attachHealthBar(mesh: THREE.Group): HealthBar {
+  const box = new THREE.Box3().setFromObject(mesh);
+  const bar = createHealthBar();
+  bar.group.position.y = box.max.y - mesh.position.y + 0.4;
+  mesh.add(bar.group);
+  mesh.userData.healthBar = bar;
+  return bar;
 }
 
 /** Makes a mesh translucent for use as a placement preview ("ghost"). */

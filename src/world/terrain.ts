@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createNoise2D } from "simplex-noise";
+import { TEXTURES } from "../systems/textures";
 
 export const WORLD_SIZE = 400;
 const SEGMENTS = 200;
@@ -95,8 +96,19 @@ export function createTerrain(): THREE.Mesh {
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geometry.computeVertexNormals();
 
+  const grassMap = TEXTURES.grass.map.clone();
+  const grassNormal = TEXTURES.grass.normalMap.clone();
+  const tileRepeat = WORLD_SIZE / 6;
+  for (const tex of [grassMap, grassNormal]) {
+    tex.repeat.set(tileRepeat, tileRepeat);
+    tex.needsUpdate = true;
+  }
+
   const material = new THREE.MeshStandardMaterial({
     vertexColors: true,
+    map: grassMap,
+    normalMap: grassNormal,
+    normalScale: new THREE.Vector2(0.4, 0.4),
     roughness: 1,
     metalness: 0,
   });

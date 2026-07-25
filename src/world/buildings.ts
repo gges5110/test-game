@@ -1,9 +1,28 @@
 import * as THREE from "three";
 import { createHealthBar, type HealthBar } from "./healthBar";
+import { TEXTURES } from "../systems/textures";
+
+/** A tinted MeshStandardMaterial using one of our procedural PBR texture
+ * sets (diffuse + normal map) instead of a flat color. */
+function texturedMaterial(kind: "wood" | "stone", color: number, repeat = 2): THREE.MeshStandardMaterial {
+  const src = TEXTURES[kind];
+  const map = src.map.clone();
+  const normalMap = src.normalMap.clone();
+  map.repeat.set(repeat, repeat);
+  normalMap.repeat.set(repeat, repeat);
+  map.needsUpdate = true;
+  normalMap.needsUpdate = true;
+  return new THREE.MeshStandardMaterial({
+    color,
+    map,
+    normalMap,
+    normalScale: new THREE.Vector2(0.6, 0.6),
+  });
+}
 
 function createHouseMesh(): THREE.Group {
   const group = new THREE.Group();
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0xd9c19a });
+  const wallMat = texturedMaterial("wood", 0xd9c19a);
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x8a4a3a });
 
   const walls = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.6, 2.2), wallMat);
@@ -23,7 +42,7 @@ function createHouseMesh(): THREE.Group {
 
 function createTownCenterMesh(): THREE.Group {
   const group = new THREE.Group();
-  const stoneMat = new THREE.MeshStandardMaterial({ color: 0xb0a898 });
+  const stoneMat = texturedMaterial("stone", 0xb0a898, 3);
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x6a3a3a });
   const flagMat = new THREE.MeshStandardMaterial({ color: 0xc0392b });
 
@@ -76,7 +95,7 @@ function createFarmMesh(): THREE.Group {
 
 function createBlacksmithMesh(): THREE.Group {
   const group = new THREE.Group();
-  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8a8378 });
+  const stoneMat = texturedMaterial("stone", 0x8a8378, 2);
   const walls = new THREE.Mesh(new THREE.BoxGeometry(2, 1.4, 1.8), stoneMat);
   walls.position.y = 0.7;
   walls.castShadow = true;
@@ -107,7 +126,7 @@ function createBlacksmithMesh(): THREE.Group {
 
 function createBarracksMesh(): THREE.Group {
   const group = new THREE.Group();
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x8a7458 });
+  const wallMat = texturedMaterial("wood", 0x8a7458, 2.5);
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a });
   const trimMat = new THREE.MeshStandardMaterial({ color: 0x7a2a2a });
 
@@ -141,7 +160,7 @@ function createBarracksMesh(): THREE.Group {
 
 function createMillMesh(): THREE.Group {
   const group = new THREE.Group();
-  const woodMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a });
+  const woodMat = texturedMaterial("wood", 0x8a6a3a, 2);
   const base = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.0, 1.4, 8), woodMat);
   base.position.y = 0.7;
   base.castShadow = true;
@@ -170,13 +189,13 @@ function createMillMesh(): THREE.Group {
 
 function createLumberCampMesh(): THREE.Group {
   const group = new THREE.Group();
-  const platformMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
+  const platformMat = texturedMaterial("wood", 0x6b4a2f, 1.5);
   const platform = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.15, 1.6), platformMat);
   platform.position.y = 0.08;
   platform.receiveShadow = true;
   group.add(platform);
 
-  const logMat = new THREE.MeshStandardMaterial({ color: 0x5c4326 });
+  const logMat = texturedMaterial("wood", 0x5c4326, 1.5);
   for (let i = 0; i < 4; i++) {
     const log = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1.4, 8), logMat);
     log.rotation.z = Math.PI / 2;
@@ -190,7 +209,7 @@ function createLumberCampMesh(): THREE.Group {
 
 function createMiningCampMesh(): THREE.Group {
   const group = new THREE.Group();
-  const postMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
+  const postMat = texturedMaterial("wood", 0x6b4a2f, 1.5);
   for (const dx of [-0.7, 0.7]) {
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.3, 6), postMat);
     post.position.set(dx, 0.65, -0.6);
@@ -206,7 +225,7 @@ function createMiningCampMesh(): THREE.Group {
   canopy.castShadow = true;
   group.add(canopy);
 
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a8378 });
+  const rockMat = texturedMaterial("stone", 0x8a8378, 1.5);
   const rockSpots: [number, number, number][] = [
     [0, 0.2, 0.4],
     [0.4, 0.16, 0.6],
@@ -225,7 +244,7 @@ function createMiningCampMesh(): THREE.Group {
 
 function createArcheryRangeMesh(): THREE.Group {
   const group = new THREE.Group();
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x8a7458 });
+  const wallMat = texturedMaterial("wood", 0x8a7458, 2.5);
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x3e6b3f });
 
   const walls = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.4, 1.8), wallMat);
@@ -257,7 +276,7 @@ function createArcheryRangeMesh(): THREE.Group {
 
 function createStableMesh(): THREE.Group {
   const group = new THREE.Group();
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x9a7a4a });
+  const wallMat = texturedMaterial("wood", 0x9a7a4a, 2.5);
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a });
 
   const walls = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.2, 2.0), wallMat);
@@ -283,14 +302,14 @@ function createStableMesh(): THREE.Group {
 
 function createMarketMesh(): THREE.Group {
   const group = new THREE.Group();
-  const woodMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a });
+  const woodMat = texturedMaterial("wood", 0x8a6a3a, 2);
   const table = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.7, 1.4), woodMat);
   table.position.y = 0.35;
   table.castShadow = true;
   table.receiveShadow = true;
   group.add(table);
 
-  const postMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
+  const postMat = texturedMaterial("wood", 0x6b4a2f, 1.5);
   for (const [dx, dz] of [
     [-0.85, -0.65],
     [0.85, -0.65],
@@ -327,7 +346,7 @@ function createMarketMesh(): THREE.Group {
 
 function createOutpostMesh(): THREE.Group {
   const group = new THREE.Group();
-  const woodMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
+  const woodMat = texturedMaterial("wood", 0x6b4a2f, 1.5);
   const post = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.2, 8), woodMat);
   post.position.y = 1.1;
   post.castShadow = true;
@@ -336,7 +355,7 @@ function createOutpostMesh(): THREE.Group {
 
   const platform = new THREE.Mesh(
     new THREE.CylinderGeometry(0.6, 0.6, 0.15, 8),
-    new THREE.MeshStandardMaterial({ color: 0x8a6a3a }),
+    texturedMaterial("wood", 0x8a6a3a, 1.5),
   );
   platform.position.y = 2.25;
   platform.castShadow = true;
@@ -362,8 +381,8 @@ function createOutpostMesh(): THREE.Group {
 
 function createCastleMesh(): THREE.Group {
   const group = new THREE.Group();
-  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x9a9086 });
-  const darkStoneMat = new THREE.MeshStandardMaterial({ color: 0x7a746a });
+  const stoneMat = texturedMaterial("stone", 0x9a9086, 3);
+  const darkStoneMat = texturedMaterial("stone", 0x7a746a, 2);
 
   const keep = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.6, 3.2, 8), stoneMat);
   keep.position.y = 1.6;

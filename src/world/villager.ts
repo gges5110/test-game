@@ -52,6 +52,10 @@ export class Villager {
     this.selectionRing.visible = selected;
   }
 
+  getHome(): THREE.Vector3 {
+    return this.home.clone();
+  }
+
   /** Player-issued: walk to a point, then resume normal idle behavior. */
   commandMoveTo(point: THREE.Vector3) {
     this.releaseJob();

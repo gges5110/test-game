@@ -40,6 +40,21 @@ export class Inventory {
     return this.counts[type];
   }
 
+  getAll(): Record<ResourceType, number> {
+    return { ...this.counts };
+  }
+
+  getCapacityBonus(): number {
+    return this.capacityBonus;
+  }
+
+  /** Replaces all state at once (e.g. restoring a save). */
+  restore(counts: Partial<Record<ResourceType, number>>, capacityBonus: number) {
+    this.counts = { wood: 0, stone: 0, food: 0, ...counts };
+    this.capacityBonus = capacityBonus;
+    this.notify();
+  }
+
   onChange(listener: Listener) {
     this.listeners.push(listener);
   }

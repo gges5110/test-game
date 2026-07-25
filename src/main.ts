@@ -11,6 +11,7 @@ import { BuildManager, getBuildingDef, type BuildingDef } from "./systems/buildi
 import { TownBuildings, type PlacedBuilding } from "./systems/townBuildings";
 import { createLighting } from "./systems/lighting";
 import { RtsCamera } from "./systems/rtsCamera";
+import { saveGame, loadGame, type SaveData } from "./systems/save";
 import { Hud } from "./ui/hud";
 
 const canvas = document.getElementById("view") as HTMLCanvasElement;
@@ -50,31 +51,74 @@ function gatherBonus(type: Parameters<typeof crafting.gatherBonus>[0]) {
   return crafting.gatherBonus(type);
 }
 
-// The town starts with a free Town Center and three villagers already
-// working — mirrors classic RTS onboarding (no manual gathering needed
-// to bootstrap the economy).
-const townCenterDef = getBuildingDef("town_center");
-const townCenterMesh = createBuildingMesh("town_center");
-townCenterMesh.position.set(0, heightAt(0, 0), 0);
-attachSelectionRing(townCenterMesh);
-attachHealthBar(townCenterMesh);
-scene.add(townCenterMesh);
-townBuildings.add("town_center", townCenterDef, townCenterMesh, townCenterMesh.position);
-buildManager.grant("town_center");
-
-let villagers: Villager[] = [];
-for (let i = 0; i < 3; i++) {
-  const angle = (i / 3) * Math.PI * 2;
-  const x = Math.cos(angle) * 3;
-  const z = Math.sin(angle) * 3;
-  villagers.push(
-    new Villager(scene, new THREE.Vector3(x, heightAt(x, z), z), resources, inventory, gatherBonus),
-  );
+function spawnBuilding(id: string, x: number, z: number, hp?: number): PlacedBuilding {
+  const def = getBuildingDef(id);
+  const mesh = createBuildingMesh(id);
+  mesh.position.set(x, heightAt(x, z), z);
+  attachSelectionRing(mesh);
+  attachHealthBar(mesh);
+  scene.add(mesh);
+  const placed = townBuildings.add(id, def, mesh, mesh.position);
+  if (hp !== undefined) placed.hp = hp;
+  return placed;
 }
 
-inventory.add("wood", 8);
-inventory.add("stone", 4);
-inventory.add("food", 2);
+let villagers: Villager[] = [];
+let farms: { building: PlacedBuilding; timer: number }[] = [];
+let waveNumber = 0;
+
+const savedGame = loadGame();
+if (savedGame) {
+  // Reload a previous session instead of resetting the town.
+  for (const b of savedGame.buildings) {
+    const placed = spawnBuilding(b.type, b.x, b.z, b.hp);
+    if (b.type === "farm") farms.push({ building: placed, timer: 0 });
+  }
+  for (const v of savedGame.villagers) {
+    const villager = new Villager(
+      scene,
+      new THREE.Vector3(v.homeX, heightAt(v.homeX, v.homeZ), v.homeZ),
+      resources,
+      inventory,
+      gatherBonus,
+    );
+    villager.model.position.set(v.x, heightAt(v.x, v.z), v.z);
+    villagers.push(villager);
+  }
+  for (const placed of townBuildings.list) {
+    if (placed.type !== "house") continue;
+    const villager = villagers.find((v) => v.getHome().distanceTo(placed.position) < 0.01);
+    if (!villager) continue;
+    placed.onDestroyed = () => {
+      scene.remove(villager.model);
+      villagers = villagers.filter((v) => v !== villager);
+      if (selectedVillager === villager) selectedVillager = null;
+    };
+  }
+  inventory.restore(savedGame.inventory, savedGame.capacityBonus);
+  buildManager.restore(savedGame.built);
+  crafting.restore(savedGame.crafted);
+  waveNumber = savedGame.waveNumber;
+} else {
+  // Fresh town: a free Town Center and three villagers already working —
+  // mirrors classic RTS onboarding (no manual gathering needed to
+  // bootstrap the economy).
+  spawnBuilding("town_center", 0, 0);
+  buildManager.grant("town_center");
+
+  for (let i = 0; i < 3; i++) {
+    const angle = (i / 3) * Math.PI * 2;
+    const x = Math.cos(angle) * 3;
+    const z = Math.sin(angle) * 3;
+    villagers.push(
+      new Villager(scene, new THREE.Vector3(x, heightAt(x, z), z), resources, inventory, gatherBonus),
+    );
+  }
+
+  inventory.add("wood", 8);
+  inventory.add("stone", 4);
+  inventory.add("food", 2);
+}
 
 rtsCamera.focus.set(0, heightAt(0, 0), 0);
 
@@ -170,12 +214,7 @@ function confirmPlacement() {
   if (townBuildings.isTooCloseToAny(ghost.position, MIN_BUILDING_SPACING)) return;
   if (!buildManager.build(selectedBuildingType)) return;
 
-  const mesh = createBuildingMesh(selectedBuildingType.id);
-  mesh.position.copy(ghost.position);
-  attachSelectionRing(mesh);
-  attachHealthBar(mesh);
-  scene.add(mesh);
-  const placed = townBuildings.add(selectedBuildingType.id, selectedBuildingType, mesh, mesh.position);
+  const placed = spawnBuilding(selectedBuildingType.id, ghost.position.x, ghost.position.z);
 
   if (selectedBuildingType.id === "house") {
     const villager = new Villager(scene, placed.position, resources, inventory, gatherBonus);
@@ -270,7 +309,6 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
 
 // Farms tick out food passively over time.
 const FARM_INTERVAL = 8;
-let farms: { building: PlacedBuilding; timer: number }[] = [];
 
 // Towers auto-attack any wolf within range.
 const TOWER_RANGE = 8;
@@ -299,7 +337,6 @@ function spawnAttackBeam(from: THREE.Vector3, to: THREE.Vector3, now: number) {
 // Wolves spawn in escalating waves and beeline for the nearest building —
 // walls and towers are the town's only defense (no player avatar to fight).
 let wolves: Wolf[] = [];
-let waveNumber = 0;
 let nextWaveAt = 30;
 const WAVE_INTERVAL = 45;
 
@@ -322,6 +359,37 @@ function damageBuilding(building: PlacedBuilding, amount: number) {
     if (selectedBuildingInfo === building) selectedBuildingInfo = null;
   }
 }
+
+// Persist progress so a reload resumes the town instead of resetting it.
+function collectSaveData(): SaveData {
+  return {
+    version: 1,
+    inventory: inventory.getAll(),
+    capacityBonus: inventory.getCapacityBonus(),
+    built: buildManager.getAllBuilt(),
+    crafted: crafting.getAllCrafted(),
+    buildings: townBuildings.list.map((b) => ({
+      type: b.type,
+      x: b.position.x,
+      z: b.position.z,
+      hp: b.hp,
+    })),
+    villagers: villagers.map((v) => ({
+      x: v.model.position.x,
+      z: v.model.position.z,
+      homeX: v.getHome().x,
+      homeZ: v.getHome().z,
+    })),
+    waveNumber,
+  };
+}
+
+const AUTOSAVE_INTERVAL_MS = 5000;
+setInterval(() => saveGame(collectSaveData()), AUTOSAVE_INTERVAL_MS);
+window.addEventListener("beforeunload", () => saveGame(collectSaveData()));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") saveGame(collectSaveData());
+});
 
 function animate() {
   const delta = Math.min(clock.getDelta(), 0.1);

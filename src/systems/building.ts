@@ -131,4 +131,13 @@ export class BuildManager {
   grant(id: string) {
     this.built[id] = (this.built[id] ?? 0) + 1;
   }
+
+  getAllBuilt(): Record<string, number> {
+    return { ...this.built };
+  }
+
+  /** Replaces all state at once (e.g. restoring a save). */
+  restore(built: Record<string, number>) {
+    this.built = { ...built };
+  }
 }

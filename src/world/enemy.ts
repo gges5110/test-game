@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { heightAt } from "./terrain";
 import type { TownBuildings, PlacedBuilding } from "../systems/townBuildings";
+import { createHealthBar, type HealthBar } from "./healthBar";
 
 const SPEED = 2.4;
 const CONTACT_RANGE = 1.6;
@@ -14,11 +15,16 @@ export class Wolf {
   alive = true;
 
   private attackReadyAt = 0;
+  private healthBar: HealthBar;
 
   constructor(scene: THREE.Scene, spawnPoint: THREE.Vector3) {
     this.model = createWolfModel();
     this.model.position.copy(spawnPoint);
     scene.add(this.model);
+
+    this.healthBar = createHealthBar(0.7, 0.1);
+    this.healthBar.group.position.y = 0.85;
+    this.model.add(this.healthBar.group);
   }
 
   update(
@@ -48,6 +54,7 @@ export class Wolf {
   takeDamage(amount: number): boolean {
     if (!this.alive) return false;
     this.hp -= amount;
+    this.healthBar.setFraction(this.hp / MAX_HP);
     if (this.hp <= 0) {
       this.alive = false;
       this.model.visible = false;

@@ -67,6 +67,15 @@ export class Crafting {
     return this.crafted[recipeId] ?? 0;
   }
 
+  getAllCrafted(): Record<string, number> {
+    return { ...this.crafted };
+  }
+
+  /** Replaces all state at once (e.g. restoring a save). */
+  restore(crafted: Record<string, number>) {
+    this.crafted = { ...crafted };
+  }
+
   /** Owning a tool boosts wood/stone yield per gather; Iron Tool supersedes Basic Tool. */
   gatherBonus(type: ResourceType): number {
     if (type === "food") return 0;

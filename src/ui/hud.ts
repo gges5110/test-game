@@ -77,6 +77,9 @@ export class Hud {
   private placementButtonsEl: HTMLElement;
   private selectBoxEl: HTMLElement;
   private infoEl: HTMLElement;
+  private minimapCanvas: HTMLCanvasElement;
+  private minimapCtx: CanvasRenderingContext2D;
+  private onMinimapClick: (x: number, z: number) => void = () => {};
   private currentSelectionActions: SelectionAction[] = [];
   private lastInfoKeyRef: unknown = undefined;
   private lastInfoActionCount = -1;
@@ -104,22 +107,33 @@ export class Hud {
       <div class="townstats"></div>
       <div class="wave-warning"></div>
       <div class="prompt" hidden></div>
-      <div class="hint">WASD pan (drag pans on touch) · scroll/pinch zoom · left-click select · left-drag box-select · right-click command (tap on mobile), or right-drag pan when nothing's selected · Esc deselect</div>
-      <div class="quick-buttons">
-        <button class="qbtn" id="craftBtn" title="Crafting (C)">🛠️</button>
-        <button class="qbtn" id="buildBtn" title="Build (B)">🏗️</button>
-        <button class="qbtn" id="tradeBtn" title="Trade (M)">💱</button>
-        <button class="qbtn" id="resetBtn" title="Reset Town">🔄</button>
+      <div class="select-box" hidden></div>
+
+      <div class="aoe-bar">
+        <div class="building-info" hidden></div>
+
+        <div class="aoe-minimap-wrap">
+          <canvas class="minimap-canvas" width="150" height="150"></canvas>
+          <div class="hint">WASD pan · scroll zoom · left-click select · left-drag box-select · right-click command · Esc deselect</div>
+        </div>
+
+        <div class="aoe-commands">
+          <div class="quick-buttons">
+            <button class="qbtn" id="craftBtn" title="Crafting (C)">🛠️</button>
+            <button class="qbtn" id="buildBtn" title="Build (B)">🏗️</button>
+            <button class="qbtn" id="tradeBtn" title="Trade (M)">💱</button>
+            <button class="qbtn" id="resetBtn" title="Reset Town">🔄</button>
+          </div>
+          <div class="placement-buttons" hidden>
+            <button class="pbtn pbtn-confirm">✓ Place</button>
+            <button class="pbtn pbtn-cancel">✕ Cancel</button>
+          </div>
+        </div>
       </div>
-      <div class="placement-buttons" hidden>
-        <button class="pbtn pbtn-confirm">✓ Place</button>
-        <button class="pbtn pbtn-cancel">✕ Cancel</button>
-      </div>
+
       <div class="craft-menu" hidden></div>
       <div class="craft-menu" id="buildMenu" hidden></div>
       <div class="craft-menu" id="tradeMenu" hidden></div>
-      <div class="select-box" hidden></div>
-      <div class="building-info" hidden></div>
     `;
     this.inventoryEl = root.querySelector(".inventory")!;
     this.townStatsEl = root.querySelector(".townstats")!;
@@ -131,6 +145,15 @@ export class Hud {
     this.placementButtonsEl = root.querySelector(".placement-buttons")!;
     this.selectBoxEl = root.querySelector(".select-box")!;
     this.infoEl = root.querySelector(".building-info")!;
+    this.minimapCanvas = root.querySelector(".minimap-canvas")!;
+    this.minimapCtx = this.minimapCanvas.getContext("2d")!;
+
+    this.minimapCanvas.addEventListener("click", (e) => {
+      const rect = this.minimapCanvas.getBoundingClientRect();
+      const u = (e.clientX - rect.left) / rect.width;
+      const v = (e.clientY - rect.top) / rect.height;
+      this.onMinimapClick(u, v);
+    });
 
     // Delegated on the panel itself (which persists across re-renders),
     // rather than rebound to each button — setSelectionInfo replaces the
@@ -255,6 +278,41 @@ export class Hud {
 
   setOnTrade(handler: (give: ResourceType, get: ResourceType) => void) {
     this.onTrade = handler;
+  }
+
+  /** handler receives normalized (0..1, 0..1) coordinates within the minimap. */
+  setOnMinimapClick(handler: (u: number, v: number) => void) {
+    this.onMinimapClick = handler;
+  }
+
+  /** Draws points (world-space, normalized against `worldSize`) and the
+   * camera's current focus onto the minimap canvas. */
+  updateMinimap(
+    points: { x: number; z: number; color: string; size?: number }[],
+    worldSize: number,
+    focus: { x: number; z: number },
+  ) {
+    const ctx = this.minimapCtx;
+    const size = this.minimapCanvas.width;
+    ctx.fillStyle = "#3a4a26";
+    ctx.fillRect(0, 0, size, size);
+
+    const toPx = (x: number, z: number): [number, number] => [
+      (x / worldSize + 0.5) * size,
+      (z / worldSize + 0.5) * size,
+    ];
+
+    for (const p of points) {
+      const [px, pz] = toPx(p.x, p.z);
+      const r = p.size ?? 3;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(px - r / 2, pz - r / 2, r, r);
+    }
+
+    const [fx, fz] = toPx(focus.x, focus.z);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(fx - 14, fz - 14, 28, 28);
   }
 
   setSelectionInfo(info: SelectionInfo | null) {

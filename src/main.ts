@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createTerrain, heightAt } from "./world/terrain";
+import { createTerrain, heightAt, WORLD_SIZE } from "./world/terrain";
 import { ResourceManager } from "./world/resources";
 import {
   createBuildingMesh,
@@ -480,6 +480,11 @@ function handleEscape() {
 hud.setOnConfirmPlacement(confirmPlacement);
 hud.setOnCancelPlacement(handleEscape);
 hud.setOnCloseInfo(deselectAll);
+hud.setOnMinimapClick((u, v) => {
+  const x = (u - 0.5) * WORLD_SIZE;
+  const z = (v - 0.5) * WORLD_SIZE;
+  rtsCamera.jumpTo(x, heightAt(x, z), z);
+});
 hud.setOnTrade((give, get) => {
   if (!inventory.has(give, TRADE_GIVE)) return;
   inventory.spend(give, TRADE_GIVE);
@@ -830,6 +835,26 @@ function animate() {
     soldiers.length,
   );
   hud.setWaveWarning(nextWaveAt - time, 1 + (waveNumber + 1));
+
+  const minimapPoints: { x: number; z: number; color: string; size?: number }[] = [];
+  for (const node of resources.nodes) {
+    if (node.depleted) continue;
+    const color = node.type === "wood" ? "#4a7c3f" : node.type === "stone" ? "#9a9086" : "#d6335c";
+    minimapPoints.push({ x: node.position.x, z: node.position.z, color, size: 2 });
+  }
+  for (const b of townBuildings.list) {
+    minimapPoints.push({ x: b.position.x, z: b.position.z, color: "#e8dcc0", size: 6 });
+  }
+  for (const v of villagers) {
+    minimapPoints.push({ x: v.model.position.x, z: v.model.position.z, color: "#6fe3ff", size: 3 });
+  }
+  for (const s of soldiers) {
+    minimapPoints.push({ x: s.model.position.x, z: s.model.position.z, color: "#ffcc55", size: 3 });
+  }
+  for (const w of wolves) {
+    minimapPoints.push({ x: w.model.position.x, z: w.model.position.z, color: "#e05a5a", size: 3 });
+  }
+  hud.updateMinimap(minimapPoints, WORLD_SIZE, rtsCamera.focus);
 
   let placementPrompt: string | null = null;
   if (selectedBuildingType && ghost) {

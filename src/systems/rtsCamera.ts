@@ -181,6 +181,12 @@ export class RtsCamera {
     this.updateTransform();
   }
 
+  /** Recenters the camera on a world point (e.g. a minimap click). */
+  jumpTo(x: number, y: number, z: number) {
+    this.focus.set(x, y, z);
+    this.updateTransform();
+  }
+
   private updateTransform() {
     const y = Math.sin(PITCH) * this.distance;
     const z = Math.cos(PITCH) * this.distance;

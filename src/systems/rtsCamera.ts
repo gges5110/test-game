@@ -187,6 +187,22 @@ export class RtsCamera {
     this.updateTransform();
   }
 
+  /** Approximate size of the ground area currently on screen, so the
+   * minimap can draw a viewport box that grows and shrinks with zoom.
+   *
+   * The frustum's half-height at the focus distance is `d * tan(fov/2)`.
+   * That extent is measured perpendicular to the view direction: horizontally
+   * the ground is parallel to it (just scale by aspect), but along Z the
+   * ground is tilted away by the camera pitch, which stretches it by
+   * 1/sin(pitch). */
+  getViewExtent(): { width: number; depth: number } {
+    const halfExtent = this.distance * Math.tan((this.camera.fov * Math.PI) / 180 / 2);
+    return {
+      width: 2 * halfExtent * this.camera.aspect,
+      depth: (2 * halfExtent) / Math.sin(PITCH),
+    };
+  }
+
   private updateTransform() {
     const y = Math.sin(PITCH) * this.distance;
     const z = Math.cos(PITCH) * this.distance;

@@ -274,6 +274,7 @@ export class Hud {
     points: { x: number; z: number; color: string; size?: number }[],
     worldSize: number,
     focus: { x: number; z: number },
+    view: { width: number; depth: number },
   ) {
     const ctx = this.minimapCtx;
     const size = this.minimapCanvas.width;
@@ -292,10 +293,14 @@ export class Hud {
       ctx.fillRect(px - r / 2, pz - r / 2, r, r);
     }
 
+    // Viewport box sized from the camera's actual ground coverage, so it
+    // grows and shrinks as the player zooms out and in.
     const [fx, fz] = toPx(focus.x, focus.z);
+    const boxW = (view.width / worldSize) * size;
+    const boxH = (view.depth / worldSize) * size;
     ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(fx - 14, fz - 14, 28, 28);
+    ctx.strokeRect(fx - boxW / 2, fz - boxH / 2, boxW, boxH);
   }
 
   setSelectionInfo(info: SelectionInfo | null) {

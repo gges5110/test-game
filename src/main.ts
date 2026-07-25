@@ -930,7 +930,12 @@ function animate() {
   for (const w of wolves) {
     minimapPoints.push({ x: w.model.position.x, z: w.model.position.z, color: "#e05a5a", size: 3 });
   }
-  hud.updateMinimap(minimapPoints, WORLD_SIZE, rtsCamera.focus);
+  hud.updateMinimap(
+    minimapPoints,
+    WORLD_SIZE,
+    rtsCamera.focus,
+    rtsCamera.getViewExtent(),
+  );
 
   let placementPrompt: string | null = null;
   if (selectedBuildingType && ghost) {

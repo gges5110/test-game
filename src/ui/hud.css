@@ -28,6 +28,15 @@ html, body {
   --parchment-text: #f0e6d2;
 }
 
+/* The hidden attribute must beat our own display rules. Without this, a rule
+   like `#hud .aoe-commands { display: flex }` (specificity 1,1,0) overrides
+   the UA stylesheet's `[hidden] { display: none }` (0,1,0), and setting
+   el.hidden = true in JS silently does nothing. This file has hit that bug
+   more than once (.placement-buttons, then .aoe-commands/.cmd-grid). */
+#hud [hidden] {
+  display: none !important;
+}
+
 /* Shared "carved wood panel with bronze trim" look, used by the resource
    strip, town stats, wave banner, and popup menus. */
 .wood-panel {
@@ -229,14 +238,15 @@ html, body {
   align-items: stretch;
   gap: 8px;
   padding: 8px;
-  pointer-events: auto;
+  /* The bar itself is a transparent layout container — only its panels are
+     visible, floating over the world. It must not capture pointer events,
+     or the empty gaps would swallow clicks meant for the game; each panel
+     re-enables them for itself. */
+  pointer-events: none;
   /* Small UI text needs a sans face and a lighter shadow — the page's
      Georgia + heavy drop shadow muddies anything under ~14px. */
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7);
-  background: linear-gradient(180deg, var(--wood-light) 0%, var(--wood-mid) 45%, var(--wood-dark) 100%);
-  border-top: 4px solid var(--bronze);
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.6), inset 0 2px 0 rgba(255, 255, 255, 0.1);
 }
 
 /* --- left: command grid --- */
@@ -245,6 +255,7 @@ html, body {
   flex: 0 0 auto;
   display: flex;
   align-items: stretch;
+  pointer-events: auto;
 }
 
 #hud .cmd-grid {
@@ -257,7 +268,8 @@ html, body {
 #hud .cmd-slot-empty {
   border: 1px solid rgba(201, 162, 39, 0.25);
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.28);
+  background: rgba(20, 12, 5, 0.62);
+  backdrop-filter: blur(3px);
   box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.55);
 }
 
@@ -324,14 +336,11 @@ html, body {
 }
 
 #hud .placement-buttons {
+  display: flex;
   flex: 1;
   gap: 12px;
   align-items: center;
   justify-content: center;
-}
-
-#hud .placement-buttons:not([hidden]) {
-  display: flex;
 }
 
 #hud .pbtn {
@@ -366,7 +375,9 @@ html, body {
   flex: 1 1 auto;
   min-width: 0;
   max-width: 340px;
-  background: rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+  background: rgba(20, 12, 5, 0.72);
+  backdrop-filter: blur(3px);
   border: 2px solid var(--bronze);
   border-radius: 6px;
   padding: 8px 12px;
@@ -473,6 +484,7 @@ html, body {
 #hud .aoe-minimap-wrap {
   flex: 0 0 auto;
   margin-left: auto;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   align-items: center;

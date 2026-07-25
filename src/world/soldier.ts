@@ -72,6 +72,10 @@ export class Soldier {
   private wanderTarget: THREE.Vector3;
   private wanderWaitUntil = 0;
   private selectionRing: THREE.Mesh;
+  /** Player-issued move order; cleared on arrival. */
+  private moveOrder: THREE.Vector3 | null = null;
+  /** Player-issued attack target, chased regardless of leash range. */
+  private orderedTarget: Wolf | null = null;
 
   constructor(scene: THREE.Scene, home: THREE.Vector3, kind: UnitKind = "soldier") {
     this.kind = kind;
@@ -101,10 +105,37 @@ export class Soldier {
     this.selectionRing.visible = selected;
   }
 
+  /** Player-issued: march to a point and hold that area. The soldier's home
+   * moves with it, so afterwards it patrols and defends the new position
+   * instead of walking back to where it was trained. */
+  commandMoveTo(point: THREE.Vector3) {
+    this.orderedTarget = null;
+    this.moveOrder = point.clone();
+    this.home.copy(point);
+    this.wanderTarget.copy(point);
+  }
+
+  /** Player-issued: hunt a specific wolf, ignoring the usual leash. */
+  commandAttack(wolf: Wolf) {
+    this.moveOrder = null;
+    this.orderedTarget = wolf;
+  }
+
   update(delta: number, now: number, wolves: Wolf[]) {
     if (!this.alive) return;
 
-    const target = this.findTarget(wolves);
+    // An explicit move order takes priority over engaging anything.
+    if (this.moveOrder) {
+      if (this.model.position.distanceTo(this.moveOrder) > 0.3) {
+        this.moveToward(this.moveOrder, delta);
+        this.syncHealthBarPosition();
+        return;
+      }
+      this.moveOrder = null;
+    }
+
+    if (this.orderedTarget && !this.orderedTarget.alive) this.orderedTarget = null;
+    const target = this.orderedTarget ?? this.findTarget(wolves);
     if (target) {
       const dist = this.model.position.distanceTo(target.model.position);
       if (dist > this.stats.attackRange) {

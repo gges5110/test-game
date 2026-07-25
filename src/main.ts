@@ -191,25 +191,30 @@ rtsCamera.focus.set(0, heightAt(0, 0), 0);
 
 let selectedVillagers: Villager[] = [];
 let selectedBuildingInfo: PlacedBuilding | null = null;
-let selectedSoldier: Soldier | null = null;
+let selectedSoldiers: Soldier[] = [];
 
-function selectVillagers(list: Villager[]) {
+/** Villagers and soldiers can be selected together (a box drag grabs both),
+ * so selecting units only clears the building selection, not each other. */
+function selectUnits(villagerList: Villager[], soldierList: Soldier[]) {
   deselectBuilding();
-  deselectSoldier();
   for (const v of selectedVillagers) v.setSelected(false);
-  selectedVillagers = list;
+  for (const s of selectedSoldiers) s.setSelected(false);
+  selectedVillagers = villagerList;
+  selectedSoldiers = soldierList;
   for (const v of selectedVillagers) v.setSelected(true);
+  for (const s of selectedSoldiers) s.setSelected(true);
 }
 
-function deselectVillager() {
+function deselectUnits() {
   for (const v of selectedVillagers) v.setSelected(false);
+  for (const s of selectedSoldiers) s.setSelected(false);
   selectedVillagers = [];
+  selectedSoldiers = [];
 }
 
 function selectBuilding(building: PlacedBuilding) {
-  deselectVillager();
+  deselectUnits();
   deselectBuilding();
-  deselectSoldier();
   selectedBuildingInfo = building;
   const ring = building.mesh.userData.selectionRing as THREE.Mesh | undefined;
   if (ring) ring.visible = true;
@@ -225,23 +230,9 @@ function deselectBuilding() {
   selectedBuildingInfo = null;
 }
 
-function selectSoldier(soldier: Soldier) {
-  deselectVillager();
-  deselectBuilding();
-  deselectSoldier();
-  selectedSoldier = soldier;
-  soldier.setSelected(true);
-}
-
-function deselectSoldier() {
-  if (selectedSoldier) selectedSoldier.setSelected(false);
-  selectedSoldier = null;
-}
-
 function deselectAll() {
-  deselectVillager();
+  deselectUnits();
   deselectBuilding();
-  deselectSoldier();
 }
 
 function resolveVillagerFromHit(hit: THREE.Object3D): Villager | null {
@@ -257,6 +248,16 @@ function resolveSoldierFromHit(hit: THREE.Object3D): Soldier | null {
   let obj: THREE.Object3D | null = hit;
   while (obj) {
     if (obj.userData.soldier) return obj.userData.soldier as Soldier;
+    obj = obj.parent;
+  }
+  return null;
+}
+
+function resolveWolfFromHit(hit: THREE.Object3D): Wolf | null {
+  let obj: THREE.Object3D | null = hit;
+  while (obj) {
+    const match = wolves.find((w) => w.model === obj);
+    if (match) return match;
     obj = obj.parent;
   }
   return null;
@@ -494,15 +495,37 @@ function buildSelectionInfo(): SelectionInfo | null {
     };
   }
 
-  if (selectedSoldier) {
-    const stats = getUnitStats(selectedSoldier.kind);
+  const villagerCount = selectedVillagers.length;
+  const soldierCount = selectedSoldiers.length;
+  if (villagerCount === 0 && soldierCount === 0) return null;
+
+  // Mixed selection: summarise both, and only offer Build (a villager-only
+  // command) when villagers are actually part of it.
+  if (villagerCount > 0 && soldierCount > 0) {
     return {
-      key: selectedSoldier,
-      title: stats.label,
-      portrait: selectedSoldier.kind === "archer" ? "🏹" : selectedSoldier.kind === "scout" ? "🐎" : "🛡️",
-      description: "Patrols near home and auto-attacks any wolf within range.",
-      hp: selectedSoldier.hp,
-      maxHp: stats.maxHp,
+      key: selectedSelectionKey(),
+      title: `${villagerCount + soldierCount} Units`,
+      portrait: "🧑‍🌾",
+      description: `${villagerCount} villager${villagerCount > 1 ? "s" : ""} and ${soldierCount} soldier${soldierCount > 1 ? "s" : ""}. Right-click to move; resources send villagers to gather, wolves send soldiers to attack.`,
+      commands: villagerCommands(),
+    };
+  }
+
+  if (soldierCount > 0) {
+    // Stats describe one unit kind; with a mixed-kind group, show the first.
+    const lead = selectedSoldiers[0];
+    const stats = getUnitStats(lead.kind);
+    const many = soldierCount > 1;
+    const sameKind = selectedSoldiers.every((s) => s.kind === lead.kind);
+    return {
+      key: selectedSelectionKey(),
+      title: many ? `${soldierCount} ${sameKind ? stats.label + "s" : "Soldiers"}` : stats.label,
+      portrait: unitIcon(lead.kind),
+      description: many
+        ? "Right-click ground to reposition the group, or a wolf to attack it."
+        : "Right-click ground to reposition it, or a wolf to attack. Holds and defends wherever you send it.",
+      hp: many ? undefined : lead.hp,
+      maxHp: many ? undefined : stats.maxHp,
       stats: [
         ["⚔️ Damage", `${stats.attackDamage}`],
         ["➹ Range", `${stats.attackRange}`],
@@ -513,20 +536,30 @@ function buildSelectionInfo(): SelectionInfo | null {
     };
   }
 
-  if (selectedVillagers.length > 0) {
-    const many = selectedVillagers.length > 1;
-    return {
-      key: selectedVillagers,
-      title: many ? `${selectedVillagers.length} Villagers` : "Villager",
-      portrait: "🧑‍🌾",
-      description: many
-        ? "Right-click ground to move as a group, or a resource for all to gather."
-        : "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
-      commands: villagerCommands(),
-    };
-  }
+  const many = villagerCount > 1;
+  return {
+    key: selectedSelectionKey(),
+    title: many ? `${villagerCount} Villagers` : "Villager",
+    portrait: "🧑‍🌾",
+    description: many
+      ? "Right-click ground to move as a group, or a resource for all to gather."
+      : "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
+    commands: villagerCommands(),
+  };
+}
 
-  return null;
+/** A stable identity for the current unit selection, so the info panel only
+ * rebuilds when the selection actually changes rather than every frame. */
+let lastSelectionKey: { v: Villager[]; s: Soldier[] } | null = null;
+function selectedSelectionKey(): unknown {
+  if (
+    !lastSelectionKey ||
+    lastSelectionKey.v !== selectedVillagers ||
+    lastSelectionKey.s !== selectedSoldiers
+  ) {
+    lastSelectionKey = { v: selectedVillagers, s: selectedSoldiers };
+  }
+  return lastSelectionKey;
 }
 
 // Building placement: pick a building from the build menu, a translucent
@@ -611,32 +644,63 @@ hud.setOnReset(() => {
   window.location.reload();
 });
 
-function commandSelectedVillager(sx: number, sy: number) {
-  if (selectedVillagers.length === 0) return;
-  const nodeMeshes = resources.nodes
-    .filter((n) => !n.depleted)
-    .map((n) => n.mesh);
-  const nodeHit = rtsCamera.raycastObjects(sx, sy, nodeMeshes);
-  if (nodeHit) {
-    const node = resolveResourceNodeFromHit(nodeHit);
-    if (node) {
-      for (const v of selectedVillagers) v.commandGather(node);
-      return;
+function commandSelectedUnits(sx: number, sy: number) {
+  const total = selectedVillagers.length + selectedSoldiers.length;
+  if (total === 0) return;
+
+  // Right-clicking a wolf is an attack order for any selected soldiers.
+  if (selectedSoldiers.length > 0) {
+    const wolfHit = rtsCamera.raycastObjects(
+      sx,
+      sy,
+      wolves.filter((w) => w.alive).map((w) => w.model),
+    );
+    if (wolfHit) {
+      const wolf = resolveWolfFromHit(wolfHit);
+      if (wolf) {
+        for (const s of selectedSoldiers) s.commandAttack(wolf);
+        return;
+      }
     }
   }
+
+  // Right-clicking a resource is a gather order for any selected villagers.
+  if (selectedVillagers.length > 0) {
+    const nodeMeshes = resources.nodes
+      .filter((n) => !n.depleted)
+      .map((n) => n.mesh);
+    const nodeHit = rtsCamera.raycastObjects(sx, sy, nodeMeshes);
+    if (nodeHit) {
+      const node = resolveResourceNodeFromHit(nodeHit);
+      if (node) {
+        for (const v of selectedVillagers) v.commandGather(node);
+        return;
+      }
+    }
+  }
+
   const point = rtsCamera.raycastGround(sx, sy);
   if (!point) return;
-  // Scatter a multi-villager group in a small ring around the target point
-  // so they don't all path onto the exact same spot.
-  const spread = selectedVillagers.length > 1 ? 0.8 : 0;
-  selectedVillagers.forEach((v, i) => {
-    const angle = (i / selectedVillagers.length) * Math.PI * 2;
-    const ox = Math.cos(angle) * spread;
-    const oz = Math.sin(angle) * spread;
-    const x = point.x + ox;
-    const z = point.z + oz;
-    v.commandMoveTo(new THREE.Vector3(x, heightAt(x, z), z));
-  });
+  // Scatter the group in a small ring around the target point so they don't
+  // all path onto the exact same spot.
+  const spread = total > 1 ? 0.8 : 0;
+  let i = 0;
+  const offsetFor = () => {
+    const angle = (i++ / total) * Math.PI * 2;
+    return new THREE.Vector3(
+      point.x + Math.cos(angle) * spread,
+      0,
+      point.z + Math.sin(angle) * spread,
+    );
+  };
+  for (const v of selectedVillagers) {
+    const p = offsetFor();
+    v.commandMoveTo(new THREE.Vector3(p.x, heightAt(p.x, p.z), p.z));
+  }
+  for (const s of selectedSoldiers) {
+    const p = offsetFor();
+    s.commandMoveTo(new THREE.Vector3(p.x, heightAt(p.x, p.z), p.z));
+  }
 }
 
 // While placing a building, the ghost continuously follows the mouse
@@ -664,7 +728,7 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   }
 
   if (button === 2) {
-    commandSelectedVillager(sx, sy);
+    commandSelectedUnits(sx, sy);
     return;
   }
 
@@ -676,14 +740,9 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   if (villagerHit) {
     const villager = resolveVillagerFromHit(villagerHit);
     if (villager) {
-      selectVillagers([villager]);
+      selectUnits([villager], []);
       return;
     }
-  }
-
-  if (isTouch && selectedVillagers.length > 0) {
-    commandSelectedVillager(sx, sy);
-    return;
   }
 
   const soldierHit = rtsCamera.raycastObjects(
@@ -694,9 +753,14 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   if (soldierHit) {
     const soldier = resolveSoldierFromHit(soldierHit);
     if (soldier) {
-      selectSoldier(soldier);
+      selectUnits([], [soldier]);
       return;
     }
+  }
+
+  if (isTouch && (selectedVillagers.length > 0 || selectedSoldiers.length > 0)) {
+    commandSelectedUnits(sx, sy);
+    return;
   }
 
   const buildingHit = rtsCamera.raycastObjects(
@@ -715,8 +779,9 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   deselectAll();
 });
 
-// Left-mouse drag box-selects every villager whose screen position falls
-// inside the rectangle (desktop only — touch has no spare gesture for it).
+// Left-mouse drag box-selects every unit — villagers and soldiers alike —
+// whose screen position falls inside the rectangle (desktop only; touch has
+// no spare gesture for it).
 rtsCamera.setOnBoxSelect((rect, final) => {
   if (selectedBuildingType) {
     hud.setSelectionBox(null);
@@ -733,13 +798,15 @@ rtsCamera.setOnBoxSelect((rect, final) => {
   const x2 = Math.max(rect.x1, rect.x2);
   const y1 = Math.min(rect.y1, rect.y2);
   const y2 = Math.max(rect.y1, rect.y2);
-  const hits = villagers.filter((v) => {
-    const p = rtsCamera.worldToScreen(v.model.position);
+  const inBox = (pos: THREE.Vector3) => {
+    const p = rtsCamera.worldToScreen(pos);
     return p !== null && p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2;
-  });
+  };
+  const villagerHits = villagers.filter((v) => inBox(v.model.position));
+  const soldierHits = soldiers.filter((s) => inBox(s.model.position));
   hud.setSelectionBox(null);
-  if (hits.length > 0) {
-    selectVillagers(hits);
+  if (villagerHits.length > 0 || soldierHits.length > 0) {
+    selectUnits(villagerHits, soldierHits);
   } else {
     deselectAll();
   }
@@ -850,7 +917,9 @@ function animate() {
   const time = clock.getElapsedTime();
 
   rtsCamera.updateKeyboardPan(delta);
-  rtsCamera.setRightDragPanEnabled(selectedVillagers.length === 0);
+  rtsCamera.setRightDragPanEnabled(
+    selectedVillagers.length === 0 && selectedSoldiers.length === 0,
+  );
 
   resources.update();
   for (const villager of villagers) villager.update(delta, time);
@@ -858,7 +927,9 @@ function animate() {
   soldiers = soldiers.filter((s) => {
     if (!s.alive) {
       s.dispose(scene);
-      if (selectedSoldier === s) selectedSoldier = null;
+      if (selectedSoldiers.includes(s)) {
+        selectedSoldiers = selectedSoldiers.filter((sel) => sel !== s);
+      }
       return false;
     }
     return true;

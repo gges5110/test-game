@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { BuildingDef } from "./building";
+import type { UnitKind } from "../world/soldier";
 
 export interface PlacedBuilding {
   id: number;
@@ -11,7 +12,11 @@ export interface PlacedBuilding {
   maxHp: number;
   /** Tower attack cooldown timestamp; unused by other building types. */
   attackReadyAt: number;
-  /** Timestamp a manually-triggered unit production finishes at, if any. */
+  /** Units queued for production, in order; index 0 is the one currently
+   * training. Their cost is already paid — AoE2 deducts at queue time, so
+   * cancelling refunds. */
+  queue: (UnitKind | "villager")[];
+  /** Timestamp the unit at the head of the queue finishes at, if training. */
   producingUntil?: number;
   /** Called once when this building is destroyed (e.g. a House removing its villager). */
   onDestroyed?: () => void;
@@ -37,6 +42,7 @@ export class TownBuildings {
       hp: def.maxHp,
       maxHp: def.maxHp,
       attackReadyAt: 0,
+      queue: [],
     };
     this.list.push(building);
     return building;

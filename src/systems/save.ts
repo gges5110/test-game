@@ -8,6 +8,9 @@ export interface SavedBuilding {
   x: number;
   z: number;
   hp: number;
+  /** Pending production. Persisted so the resources already spent on a
+   * queue aren't silently lost across a reload. */
+  queue?: (UnitKind | "villager")[];
 }
 
 export interface SavedVillager {

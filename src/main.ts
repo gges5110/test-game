@@ -121,6 +121,7 @@ if (savedGame) {
     // instead of crashing the whole load.
     if (!BUILDINGS.some((def) => def.id === b.type)) continue;
     const placed = spawnBuilding(b.type, b.x, b.z, b.hp);
+    placed.queue = b.queue ? [...b.queue] : [];
     registerBuildingBehavior(placed);
   }
   for (const v of savedGame.villagers) {
@@ -287,13 +288,35 @@ function unitLabel(unit: UnitKind | "villager"): string {
   return unit === "villager" ? "Villager" : getUnitStats(unit).label;
 }
 
-/** Spends food and starts a building's queued unit production, if it can. */
-function startProduction(building: PlacedBuilding) {
+function unitIcon(unit: UnitKind | "villager"): string {
+  if (unit === "villager") return "🧑‍🌾";
+  if (unit === "archer") return "🏹";
+  if (unit === "scout") return "🐎";
+  return "🛡️";
+}
+
+/** How many units a single building may have pending. */
+const MAX_QUEUE = 10;
+
+/** Adds a unit to a building's production queue. Following AoE2, the cost is
+ * charged the moment it's queued rather than when training starts — so a deep
+ * queue locks resources up front, and cancelling gives them back. */
+function enqueueUnit(building: PlacedBuilding) {
   const trains = building.def.trains;
-  if (!trains || building.producingUntil !== undefined) return;
+  if (!trains || building.queue.length >= MAX_QUEUE) return;
   if (!inventory.has("food", trains.foodCost)) return;
   inventory.spend("food", trains.foodCost);
-  building.producingUntil = clock.getElapsedTime() + trains.time;
+  building.queue.push(trains.unit);
+}
+
+/** Removes a queued unit and refunds what was paid for it. Cancelling the
+ * one in progress abandons its timer; the next in line starts fresh. */
+function cancelQueued(building: PlacedBuilding, index: number) {
+  const trains = building.def.trains;
+  if (!trains || index < 0 || index >= building.queue.length) return;
+  building.queue.splice(index, 1);
+  inventory.add("food", trains.foodCost);
+  if (index === 0) building.producingUntil = undefined;
 }
 
 /** Spends whatever wood is available (up to the full repair cost) and
@@ -371,25 +394,19 @@ function buildingCommands(building: PlacedBuilding): CommandButton[] {
   const def = building.def;
 
   if (def.trains) {
-    if (building.producingUntil !== undefined) {
-      const remaining = Math.max(0, building.producingUntil - clock.getElapsedTime());
-      commands.push({
-        icon: "⏳",
-        label: unitLabel(def.trains.unit),
-        sub: `${remaining.toFixed(1)}s`,
-        disabled: true,
-        tooltip: `Training ${unitLabel(def.trains.unit)}…`,
-      });
-    } else {
-      commands.push({
-        icon: def.trains.unit === "villager" ? "🧑‍🌾" : "🛡️",
-        label: unitLabel(def.trains.unit),
-        sub: `${def.trains.foodCost}${RESOURCE_ICON.food}`,
-        disabled: !inventory.has("food", def.trains.foodCost),
-        tooltip: `Train ${unitLabel(def.trains.unit)}`,
-        onClick: () => startProduction(building),
-      });
-    }
+    const trains = def.trains;
+    const queueFull = building.queue.length >= MAX_QUEUE;
+    const affordable = inventory.has("food", trains.foodCost);
+    commands.push({
+      icon: unitIcon(trains.unit),
+      label: unitLabel(trains.unit),
+      sub: `${trains.foodCost}${RESOURCE_ICON.food}`,
+      disabled: !affordable || queueFull,
+      tooltip: queueFull
+        ? `Queue is full (${MAX_QUEUE})`
+        : `Train ${unitLabel(trains.unit)} — ${trains.foodCost} food, charged now`,
+      onClick: () => enqueueUnit(building),
+    });
   }
 
   // Blacksmith researches the tool upgrades, AoE2-style (techs live in the
@@ -443,6 +460,7 @@ function buildSelectionInfo(): SelectionInfo | null {
         ]
       : [];
 
+    const trains = def.trains;
     return {
       key: building,
       title: def.name,
@@ -452,6 +470,27 @@ function buildSelectionInfo(): SelectionInfo | null {
       maxHp: building.maxHp,
       stats,
       commands: buildingCommands(building),
+      queue: trains
+        ? {
+            items: building.queue.map((unit) => ({
+              icon: unitIcon(unit),
+              tooltip: `Cancel ${unitLabel(unit)} (refunds ${trains.foodCost} food)`,
+            })),
+            progress:
+              building.producingUntil !== undefined
+                ? 1 - (building.producingUntil - clock.getElapsedTime()) / trains.time
+                : 0,
+            status:
+              building.producingUntil !== undefined
+                ? `Training ${unitLabel(building.queue[0] ?? trains.unit)}… ${Math.max(
+                    0,
+                    building.producingUntil - clock.getElapsedTime(),
+                  ).toFixed(1)}s` +
+                  (building.queue.length > 1 ? ` (+${building.queue.length - 1} queued)` : "")
+                : null,
+            onCancel: (i: number) => cancelQueued(building, i),
+          }
+        : undefined,
     };
   }
 
@@ -770,6 +809,7 @@ function collectSaveData(): SaveData {
       x: b.position.x,
       z: b.position.z,
       hp: b.hp,
+      queue: [...b.queue],
     })),
     villagers: villagers.map((v) => ({
       x: v.model.position.x,
@@ -834,12 +874,18 @@ function animate() {
   }
 
   for (const building of townBuildings.list) {
+    const trains = building.def.trains;
+    if (!trains) continue;
+    // Start the next queued unit whenever the building is idle.
+    if (building.producingUntil === undefined && building.queue.length > 0) {
+      building.producingUntil = time + trains.time;
+    }
     if (
       building.producingUntil !== undefined &&
       time >= building.producingUntil
     ) {
+      const unit = building.queue.shift();
       building.producingUntil = undefined;
-      const unit = building.def.trains!.unit;
       if (unit === "villager") {
         const villager = new Villager(
           scene,
@@ -849,7 +895,7 @@ function animate() {
           gatherBonus,
         );
         villagers.push(villager);
-      } else {
+      } else if (unit) {
         soldiers.push(new Soldier(scene, building.position, unit));
       }
     }

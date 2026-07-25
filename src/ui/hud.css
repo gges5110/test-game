@@ -470,6 +470,66 @@ html, body {
   line-height: 1.5;
 }
 
+#hud .queue-block {
+  margin-top: 7px;
+}
+
+#hud .queue-status {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bronze-bright);
+  margin-bottom: 3px;
+}
+
+#hud .queue-progress {
+  height: 8px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(201, 162, 39, 0.4);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+#hud .queue-fill {
+  height: 100%;
+  background: var(--bronze-bright);
+}
+
+#hud .queue-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+#hud .queue-item {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  padding: 0;
+  border: 1px solid rgba(201, 162, 39, 0.6);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: border-color 0.12s ease, transform 0.08s ease;
+}
+
+/* The head of the queue is the one actually training. */
+#hud .queue-item:first-child {
+  border-color: var(--bronze-bright);
+}
+
+#hud .queue-item:hover {
+  border-color: #ff8a8a;
+  background: rgba(120, 30, 30, 0.5);
+}
+
+#hud .queue-item:active {
+  transform: scale(0.9);
+}
+
 #hud .building-info .desc {
   font-size: 12px;
   opacity: 0.85;

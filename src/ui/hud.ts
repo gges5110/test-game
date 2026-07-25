@@ -67,6 +67,15 @@ export interface SelectionInfo {
   stats?: [string, string][];
   /** Contextual commands for this selection, filling the command grid. */
   commands?: CommandButton[];
+  /** Pending unit production, shown as a clickable icon strip. */
+  queue?: {
+    items: { icon: string; tooltip: string }[];
+    /** 0..1 training progress of the unit at the head of the queue. */
+    progress: number;
+    /** e.g. "Training Villager… 4.2s", or null when the queue is empty. */
+    status: string | null;
+    onCancel: (index: number) => void;
+  };
 }
 
 export class Hud {
@@ -86,6 +95,11 @@ export class Hud {
   private lastInfoKeyRef: unknown = undefined;
   private hpFillEl: HTMLElement | null = null;
   private hpTextEl: HTMLElement | null = null;
+  private queueStripEl: HTMLElement | null = null;
+  private queueFillEl: HTMLElement | null = null;
+  private queueStatusEl: HTMLElement | null = null;
+  private lastQueueSig = "";
+  private onCancelQueued: (index: number) => void = () => {};
   /** Root commands for the current selection, plus which sub-page (by index
    * path) is drilled into — AoE2's Build → Economic/Military pages. */
   private rootCommands: CommandButton[] = [];
@@ -185,6 +199,8 @@ export class Hud {
         this.onCloseInfo();
         return;
       }
+      const queued = target.closest<HTMLElement>(".queue-item");
+      if (queued) this.onCancelQueued(Number(queued.dataset.i));
     });
 
     this.inventory.onChange(() => this.renderInventory());
@@ -362,6 +378,16 @@ export class Hud {
       : "";
 
     this.infoEl.classList.remove("empty");
+    const queueBlock = info.queue
+      ? `
+        <div class="queue-block">
+          <div class="queue-status"></div>
+          <div class="queue-progress"><div class="queue-fill"></div></div>
+          <div class="queue-strip"></div>
+        </div>
+      `
+      : "";
+
     this.infoEl.innerHTML = `
       <div class="info-name">${info.title}<button class="menu-close">✕</button></div>
       <div class="info-body">
@@ -371,11 +397,16 @@ export class Hud {
           ${statsRows}
         </div>
       </div>
+      ${queueBlock}
       <div class="desc">${info.description}</div>
     `;
 
     this.hpFillEl = this.infoEl.querySelector(".hp-fill");
     this.hpTextEl = this.infoEl.querySelector(".hp-text");
+    this.queueStripEl = this.infoEl.querySelector(".queue-strip");
+    this.queueFillEl = this.infoEl.querySelector(".queue-fill");
+    this.queueStatusEl = this.infoEl.querySelector(".queue-status");
+    this.lastQueueSig = "";
     this.updateSelectionDynamic(info);
   }
 
@@ -386,6 +417,34 @@ export class Hud {
       this.hpFillEl.style.width = `${pct}%`;
       this.hpFillEl.style.background = hpColor;
       this.hpTextEl.textContent = `${Math.ceil(info.hp)} / ${info.maxHp}`;
+    }
+    this.updateQueue(info);
+  }
+
+  private updateQueue(info: SelectionInfo) {
+    if (!info.queue || !this.queueStripEl || !this.queueFillEl) return;
+    this.onCancelQueued = info.queue.onCancel;
+
+    // Only rebuild the icons when the queue's contents actually change —
+    // this runs every frame otherwise.
+    const sig = info.queue.items.map((i) => i.icon).join("");
+    if (sig !== this.lastQueueSig) {
+      this.lastQueueSig = sig;
+      this.queueStripEl.innerHTML = info.queue.items
+        .map(
+          (item, i) =>
+            `<button class="queue-item" data-i="${i}" title="${item.tooltip}">${item.icon}</button>`,
+        )
+        .join("");
+    }
+
+    const active = info.queue.items.length > 0;
+    this.queueFillEl.style.width = active
+      ? `${Math.max(0, Math.min(1, info.queue.progress)) * 100}%`
+      : "0%";
+    if (this.queueStatusEl) {
+      this.queueStatusEl.textContent = info.queue.status ?? "";
+      this.queueStatusEl.hidden = !info.queue.status;
     }
   }
 

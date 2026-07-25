@@ -121,15 +121,6 @@ export const BUILDINGS: BuildingDef[] = [
     trains: { unit: "scout", foodCost: 4, time: 14 },
   },
   {
-    id: "market",
-    name: "Market",
-    cost: { wood: 10 },
-    description: "Unlocks trading resources with each other",
-    maxHp: 100,
-    requiresTownCenter: true,
-    maxBuilt: 1,
-  },
-  {
     id: "outpost",
     name: "Outpost",
     cost: { wood: 3, stone: 2 },

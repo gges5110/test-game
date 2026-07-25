@@ -24,13 +24,7 @@ import { createLighting } from "./systems/lighting";
 import { createComposer } from "./systems/postfx";
 import { RtsCamera } from "./systems/rtsCamera";
 import { saveGame, loadGame, clearSave, type SaveData } from "./systems/save";
-import {
-  Hud,
-  TRADE_GIVE,
-  TRADE_GET,
-  type SelectionInfo,
-  type SelectionAction,
-} from "./ui/hud";
+import { Hud, type SelectionInfo, type SelectionAction } from "./ui/hud";
 
 const canvas = document.getElementById("view") as HTMLCanvasElement;
 const hudRoot = document.getElementById("hud") as HTMLElement;
@@ -484,11 +478,6 @@ hud.setOnMinimapClick((u, v) => {
   const x = (u - 0.5) * WORLD_SIZE;
   const z = (v - 0.5) * WORLD_SIZE;
   rtsCamera.jumpTo(x, heightAt(x, z), z);
-});
-hud.setOnTrade((give, get) => {
-  if (!inventory.has(give, TRADE_GIVE)) return;
-  inventory.spend(give, TRADE_GIVE);
-  inventory.add(get, TRADE_GET);
 });
 hud.setOnReset(() => {
   resetting = true;

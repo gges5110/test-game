@@ -300,50 +300,6 @@ function createStableMesh(): THREE.Group {
   return group;
 }
 
-function createMarketMesh(): THREE.Group {
-  const group = new THREE.Group();
-  const woodMat = texturedMaterial("wood", 0x8a6a3a, 2);
-  const table = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.7, 1.4), woodMat);
-  table.position.y = 0.35;
-  table.castShadow = true;
-  table.receiveShadow = true;
-  group.add(table);
-
-  const postMat = texturedMaterial("wood", 0x6b4a2f, 1.5);
-  for (const [dx, dz] of [
-    [-0.85, -0.65],
-    [0.85, -0.65],
-    [-0.85, 0.65],
-    [0.85, 0.65],
-  ]) {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 6), postMat);
-    post.position.set(dx, 0.8, dz);
-    post.castShadow = true;
-    group.add(post);
-  }
-
-  const canopy = new THREE.Mesh(
-    new THREE.BoxGeometry(2.1, 0.08, 1.7),
-    new THREE.MeshStandardMaterial({ color: 0xc0392b }),
-  );
-  canopy.position.y = 1.6;
-  canopy.castShadow = true;
-  group.add(canopy);
-
-  const goodsColors = [0xd9c19a, 0x8a8378, 0xd6335c];
-  goodsColors.forEach((color, i) => {
-    const goods = new THREE.Mesh(
-      new THREE.BoxGeometry(0.35, 0.3, 0.35),
-      new THREE.MeshStandardMaterial({ color }),
-    );
-    goods.position.set(-0.5 + i * 0.5, 0.85, 0);
-    goods.castShadow = true;
-    group.add(goods);
-  });
-
-  return group;
-}
-
 function createOutpostMesh(): THREE.Group {
   const group = new THREE.Group();
   const woodMat = texturedMaterial("wood", 0x6b4a2f, 1.5);
@@ -444,7 +400,6 @@ export function createBuildingMesh(id: string): THREE.Group {
   if (id === "barracks") return createBarracksMesh();
   if (id === "archery_range") return createArcheryRangeMesh();
   if (id === "stable") return createStableMesh();
-  if (id === "market") return createMarketMesh();
   if (id === "outpost") return createOutpostMesh();
   return createCastleMesh();
 }

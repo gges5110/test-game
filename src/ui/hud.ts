@@ -55,6 +55,7 @@ export interface SelectionInfo {
 export class Hud {
   private inventoryEl: HTMLElement;
   private townStatsEl: HTMLElement;
+  private settingsMenuEl: HTMLElement;
   private waveWarningEl: HTMLElement;
   private promptEl: HTMLElement;
   private craftMenuEl: HTMLElement;
@@ -73,6 +74,7 @@ export class Hud {
   private actionButtonEls: HTMLButtonElement[] = [];
   private craftMenuOpen = false;
   private buildMenuOpen = false;
+  private settingsMenuOpen = false;
   private onSelectBuilding: (building: BuildingDef) => void = () => {};
   private onConfirmPlacement: () => void = () => {};
   private onCancelPlacement: () => void = () => {};
@@ -87,7 +89,12 @@ export class Hud {
   ) {
     root.innerHTML = `
       <div class="inventory"></div>
+      <button class="settings-btn" id="settingsBtn" title="Settings">⚙️</button>
       <div class="townstats"></div>
+      <div class="settings-menu" hidden>
+        <h2>Settings <button class="menu-close">✕</button></h2>
+        <button class="settings-action" id="resetBtn">🔄 Reset Town</button>
+      </div>
       <div class="wave-warning"></div>
       <div class="prompt" hidden></div>
       <div class="select-box" hidden></div>
@@ -104,7 +111,6 @@ export class Hud {
           <div class="quick-buttons">
             <button class="qbtn" id="craftBtn" title="Crafting (C)">🛠️</button>
             <button class="qbtn" id="buildBtn" title="Build (B)">🏗️</button>
-            <button class="qbtn" id="resetBtn" title="Reset Town">🔄</button>
           </div>
           <div class="placement-buttons" hidden>
             <button class="pbtn pbtn-confirm">✓ Place</button>
@@ -118,6 +124,7 @@ export class Hud {
     `;
     this.inventoryEl = root.querySelector(".inventory")!;
     this.townStatsEl = root.querySelector(".townstats")!;
+    this.settingsMenuEl = root.querySelector(".settings-menu")!;
     this.waveWarningEl = root.querySelector(".wave-warning")!;
     this.promptEl = root.querySelector(".prompt")!;
     this.craftMenuEl = root.querySelector(".craft-menu")!;
@@ -162,11 +169,15 @@ export class Hud {
     root.querySelector("#craftBtn")!.addEventListener("click", () => {
       this.buildMenuOpen = false;
       this.buildMenuEl.hidden = true;
+      this.settingsMenuOpen = false;
+      this.settingsMenuEl.hidden = true;
       this.toggleCraftMenu();
     });
     root.querySelector("#buildBtn")!.addEventListener("click", () => {
       this.craftMenuOpen = false;
       this.craftMenuEl.hidden = true;
+      this.settingsMenuOpen = false;
+      this.settingsMenuEl.hidden = true;
       this.toggleBuildMenu();
     });
     this.placementButtonsEl
@@ -180,11 +191,13 @@ export class Hud {
         this.onReset();
       }
     });
+    root.querySelector("#settingsBtn")!.addEventListener("click", () => this.toggleSettingsMenu());
+    this.settingsMenuEl.querySelector(".menu-close")!.addEventListener("click", () => this.toggleSettingsMenu());
 
     document.addEventListener("pointerdown", (e) => {
-      if (!(this.craftMenuOpen || this.buildMenuOpen)) return;
+      if (!(this.craftMenuOpen || this.buildMenuOpen || this.settingsMenuOpen)) return;
       const target = e.target as HTMLElement;
-      if (target.closest(".qbtn") || target.closest(".craft-menu")) return;
+      if (target.closest(".qbtn") || target.closest(".craft-menu") || target.closest(".settings-btn") || target.closest(".settings-menu")) return;
       this.closeMenus();
     });
 
@@ -200,7 +213,7 @@ export class Hud {
       } else if (e.code === "Enter") {
         this.onConfirmPlacement();
       } else if (e.code === "Escape") {
-        if (this.craftMenuOpen || this.buildMenuOpen) {
+        if (this.craftMenuOpen || this.buildMenuOpen || this.settingsMenuOpen) {
           this.closeMenus();
         } else {
           this.onCancelPlacement();
@@ -403,11 +416,22 @@ export class Hud {
     if (this.buildMenuOpen) this.renderBuildMenu();
   }
 
+  toggleSettingsMenu() {
+    this.craftMenuOpen = false;
+    this.craftMenuEl.hidden = true;
+    this.buildMenuOpen = false;
+    this.buildMenuEl.hidden = true;
+    this.settingsMenuOpen = !this.settingsMenuOpen;
+    this.settingsMenuEl.hidden = !this.settingsMenuOpen;
+  }
+
   closeMenus() {
     this.craftMenuOpen = false;
     this.craftMenuEl.hidden = true;
     this.buildMenuOpen = false;
     this.buildMenuEl.hidden = true;
+    this.settingsMenuOpen = false;
+    this.settingsMenuEl.hidden = true;
   }
 
   private renderCraftMenu() {

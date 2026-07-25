@@ -9,12 +9,19 @@ const RESOURCE_LABEL: Record<ResourceType, string> = {
   food: "🍞 Food",
 };
 
+export interface SelectionAction {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+}
+
 export interface SelectionInfo {
   title: string;
   description: string;
   hp?: number;
   maxHp?: number;
   stats?: [string, string][];
+  actions?: SelectionAction[];
 }
 
 // Trades sell 5 of one resource for 2 of another — a lossy exchange rate,
@@ -40,6 +47,7 @@ export class Hud {
   private placementButtonsEl: HTMLElement;
   private selectBoxEl: HTMLElement;
   private infoEl: HTMLElement;
+  private currentSelectionActions: SelectionAction[] = [];
   private craftMenuOpen = false;
   private buildMenuOpen = false;
   private tradeMenuOpen = false;
@@ -86,6 +94,22 @@ export class Hud {
     this.placementButtonsEl = root.querySelector(".placement-buttons")!;
     this.selectBoxEl = root.querySelector(".select-box")!;
     this.infoEl = root.querySelector(".building-info")!;
+
+    // Delegated on the panel itself (which persists across re-renders),
+    // rather than rebound to each button — setSelectionInfo replaces the
+    // panel's innerHTML every animation frame, so per-button listeners get
+    // destroyed mid-click and silently never fire.
+    this.infoEl.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest(".menu-close")) {
+        this.onCloseInfo();
+        return;
+      }
+      const actionBtn = target.closest<HTMLButtonElement>(".info-action");
+      if (actionBtn) {
+        this.currentSelectionActions[Number(actionBtn.dataset.i)]?.onClick();
+      }
+    });
 
     this.inventory.onChange(() => {
       this.renderInventory();
@@ -214,13 +238,18 @@ export class Hud {
         <div class="hp-track"><div class="hp-fill" style="width:${pct}%;background:${hpColor}"></div></div>
       `;
     }
+    this.currentSelectionActions = info.actions ?? [];
+    const actionButtons = this.currentSelectionActions
+      .map((a, i) => `<button class="info-action" data-i="${i}" ${a.disabled ? "disabled" : ""}>${a.label}</button>`)
+      .join("");
+
     this.infoEl.innerHTML = `
       <h2>${info.title}<button class="menu-close">✕</button></h2>
       <div class="desc">${info.description}</div>
       ${hpBlock}
       ${statsRows ? `<div class="stats">${statsRows}</div>` : ""}
+      ${actionButtons ? `<div class="info-actions">${actionButtons}</div>` : ""}
     `;
-    this.infoEl.querySelector(".menu-close")!.addEventListener("click", () => this.onCloseInfo());
   }
 
   setSelectionBox(rect: { x1: number; y1: number; x2: number; y2: number } | null) {

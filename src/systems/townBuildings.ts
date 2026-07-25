@@ -11,6 +11,8 @@ export interface PlacedBuilding {
   maxHp: number;
   /** Tower attack cooldown timestamp; unused by other building types. */
   attackReadyAt: number;
+  /** Timestamp a manually-triggered unit production finishes at, if any. */
+  producingUntil?: number;
   /** Called once when this building is destroyed (e.g. a House removing its villager). */
   onDestroyed?: () => void;
 }

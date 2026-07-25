@@ -20,8 +20,9 @@ export interface BuildingDef {
   attackOriginY?: number;
   /** If set, this building passively produces a resource over time. */
   produces?: { type: ResourceType; amount: number; interval: number };
-  /** If set, this building periodically trains an autonomous unit, paid in food. */
-  trains?: UnitKind;
+  /** If set, selecting this building offers a "Train" action that spends
+   * food and produces a unit after `time` seconds. */
+  trains?: { unit: UnitKind | "villager"; foodCost: number; time: number };
 }
 
 // Building roster and wood/stone cost ratios mirror Age of Empires II: economy
@@ -33,10 +34,11 @@ export const BUILDINGS: BuildingDef[] = [
     id: "town_center",
     name: "Town Center",
     cost: {},
-    description: "Your town's founding building",
+    description: "Your town's founding building — select it to train Villagers",
     maxHp: 400,
     maxBuilt: 1,
     hidden: true,
+    trains: { unit: "villager", foodCost: 3, time: 8 },
   },
   {
     id: "house",
@@ -95,28 +97,28 @@ export const BUILDINGS: BuildingDef[] = [
     id: "barracks",
     name: "Barracks",
     cost: { wood: 10 },
-    description: "Trains a Soldier every so often, paid for in food",
+    description: "Select it to train Soldiers, paid for in food",
     maxHp: 110,
     requiresTownCenter: true,
-    trains: "soldier",
+    trains: { unit: "soldier", foodCost: 4, time: 14 },
   },
   {
     id: "archery_range",
     name: "Archery Range",
     cost: { wood: 10 },
-    description: "Trains an Archer every so often, paid for in food",
+    description: "Select it to train Archers, paid for in food",
     maxHp: 100,
     requiresTownCenter: true,
-    trains: "archer",
+    trains: { unit: "archer", foodCost: 4, time: 14 },
   },
   {
     id: "stable",
     name: "Stable",
     cost: { wood: 10 },
-    description: "Trains a Scout every so often, paid for in food",
+    description: "Select it to train Scouts, paid for in food",
     maxHp: 100,
     requiresTownCenter: true,
-    trains: "scout",
+    trains: { unit: "scout", foodCost: 4, time: 14 },
   },
   {
     id: "market",

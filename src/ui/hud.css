@@ -243,6 +243,29 @@ html, body {
   gap: 2px 10px;
 }
 
+#hud .building-info .info-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#hud .building-info .info-action {
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #3d6b8a;
+  color: white;
+}
+
+#hud .building-info .info-action:disabled {
+  background: #444;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 #hud .craft-menu button:disabled {
   background: #444;
   cursor: not-allowed;

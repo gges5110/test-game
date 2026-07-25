@@ -14,7 +14,7 @@ import { createLighting } from "./systems/lighting";
 import { createComposer } from "./systems/postfx";
 import { RtsCamera } from "./systems/rtsCamera";
 import { saveGame, loadGame, clearSave, type SaveData } from "./systems/save";
-import { Hud, TRADE_GIVE, TRADE_GET, type SelectionInfo } from "./ui/hud";
+import { Hud, TRADE_GIVE, TRADE_GET, type SelectionInfo, type SelectionAction } from "./ui/hud";
 
 const canvas = document.getElementById("view") as HTMLCanvasElement;
 const hudRoot = document.getElementById("hud") as HTMLElement;
@@ -72,23 +72,17 @@ function spawnBuilding(id: string, x: number, z: number, hp?: number): PlacedBui
 let villagers: Villager[] = [];
 let soldiers: Soldier[] = [];
 let producers: { building: PlacedBuilding; timer: number }[] = [];
-let trainers: { building: PlacedBuilding; timer: number }[] = [];
 let waveNumber = 0;
 
-/** Registers a placed building as a passive resource producer or unit
- * trainer if its def calls for one, wiring cleanup for when it's destroyed. */
+/** Registers a placed building as a passive resource producer if its def
+ * calls for one, wiring cleanup for when it's destroyed. Unit training is
+ * player-triggered (see startProduction) rather than automatic. */
 function registerBuildingBehavior(placed: PlacedBuilding) {
   if (placed.def.produces) {
     const entry = { building: placed, timer: 0 };
     producers.push(entry);
     placed.onDestroyed = () => {
       producers = producers.filter((e) => e !== entry);
-    };
-  } else if (placed.def.trains) {
-    const entry = { building: placed, timer: 0 };
-    trainers.push(entry);
-    placed.onDestroyed = () => {
-      trainers = trainers.filter((e) => e !== entry);
     };
   }
 }
@@ -251,9 +245,39 @@ function resolveBuildingFromHit(hit: THREE.Object3D): PlacedBuilding | null {
 }
 
 /** Builds the info panel content for whatever is currently selected, if anything. */
+const REPAIR_WOOD_PER_HP = 0.25;
+
+function unitLabel(unit: UnitKind | "villager"): string {
+  return unit === "villager" ? "Villager" : getUnitStats(unit).label;
+}
+
+/** Spends food and starts a building's queued unit production, if it can. */
+function startProduction(building: PlacedBuilding) {
+  const trains = building.def.trains;
+  if (!trains || building.producingUntil !== undefined) return;
+  if (!inventory.has("food", trains.foodCost)) return;
+  inventory.spend("food", trains.foodCost);
+  building.producingUntil = clock.getElapsedTime() + trains.time;
+}
+
+/** Spends whatever wood is available (up to the full repair cost) and
+ * restores a proportional amount of HP — so repairing isn't all-or-nothing;
+ * players can top up a building bit by bit as wood comes in. */
+function repairBuilding(building: PlacedBuilding) {
+  const missing = building.maxHp - building.hp;
+  if (missing <= 0) return;
+  const fullCost = Math.max(1, Math.ceil(missing * REPAIR_WOOD_PER_HP));
+  const spend = Math.min(fullCost, inventory.get("wood"));
+  if (spend <= 0) return;
+  inventory.spend("wood", spend);
+  const healed = Math.min(missing, spend / REPAIR_WOOD_PER_HP);
+  building.hp = Math.min(building.maxHp, building.hp + healed);
+}
+
 function buildSelectionInfo(): SelectionInfo | null {
   if (selectedBuildingInfo) {
-    const def = selectedBuildingInfo.def;
+    const building = selectedBuildingInfo;
+    const def = building.def;
     const stats: [string, string][] = def.attack
       ? [
           ["Range", `${def.attack.range}`],
@@ -261,12 +285,39 @@ function buildSelectionInfo(): SelectionInfo | null {
           ["Cooldown", `${def.attack.cooldown}s`],
         ]
       : [];
+
+    const actions: SelectionAction[] = [];
+    if (def.trains) {
+      if (building.producingUntil !== undefined) {
+        const remaining = Math.max(0, building.producingUntil - clock.getElapsedTime());
+        actions.push({ label: `Training ${unitLabel(def.trains.unit)}… ${remaining.toFixed(1)}s`, disabled: true, onClick: () => {} });
+      } else {
+        const affordable = inventory.has("food", def.trains.foodCost);
+        actions.push({
+          label: `Train ${unitLabel(def.trains.unit)} (${def.trains.foodCost} food)`,
+          disabled: !affordable,
+          onClick: () => startProduction(building),
+        });
+      }
+    }
+    if (building.hp < building.maxHp) {
+      const fullCost = Math.max(1, Math.ceil((building.maxHp - building.hp) * REPAIR_WOOD_PER_HP));
+      const spend = Math.min(fullCost, inventory.get("wood"));
+      const label = spend >= fullCost ? `Repair (${fullCost} wood)` : `Repair (${spend}/${fullCost} wood — partial)`;
+      actions.push({
+        label,
+        disabled: spend <= 0,
+        onClick: () => repairBuilding(building),
+      });
+    }
+
     return {
       title: def.name,
       description: def.description,
-      hp: selectedBuildingInfo.hp,
-      maxHp: selectedBuildingInfo.maxHp,
+      hp: building.hp,
+      maxHp: building.maxHp,
       stats,
+      actions,
     };
   }
 
@@ -489,10 +540,6 @@ rtsCamera.setOnBoxSelect((rect, final) => {
   }
 });
 
-// Barracks/Archery Range/Stable spend food to train an autonomous defender.
-const TRAIN_INTERVAL = 14;
-const TRAIN_FOOD_COST = 4;
-
 const BEAM_DURATION = 0.15;
 
 let attackEffects: { mesh: THREE.Mesh; expiresAt: number }[] = [];
@@ -616,16 +663,15 @@ function animate() {
     }
   }
 
-  for (const trainer of trainers) {
-    trainer.timer += delta;
-    if (trainer.timer >= TRAIN_INTERVAL) {
-      if (inventory.has("food", TRAIN_FOOD_COST)) {
-        trainer.timer -= TRAIN_INTERVAL;
-        inventory.spend("food", TRAIN_FOOD_COST);
-        soldiers.push(new Soldier(scene, trainer.building.position, trainer.building.def.trains as UnitKind));
+  for (const building of townBuildings.list) {
+    if (building.producingUntil !== undefined && time >= building.producingUntil) {
+      building.producingUntil = undefined;
+      const unit = building.def.trains!.unit;
+      if (unit === "villager") {
+        const villager = new Villager(scene, building.position, resources, inventory, gatherBonus);
+        villagers.push(villager);
       } else {
-        // Not enough food yet — hold at the threshold instead of stalling forever mid-cycle.
-        trainer.timer = TRAIN_INTERVAL;
+        soldiers.push(new Soldier(scene, building.position, unit));
       }
     }
   }

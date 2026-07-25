@@ -206,6 +206,11 @@ html, body {
   overflow-y: auto;
 }
 
+#hud #buildMenu {
+  min-width: 300px;
+  max-width: 340px;
+}
+
 #hud .craft-menu h2 {
   margin: 0 0 10px;
   font-size: 16px;
@@ -258,6 +263,95 @@ html, body {
 #hud .craft-menu button:active:not(:disabled) {
   background: #315572;
   transform: scale(0.96);
+}
+
+#hud .craft-menu .build-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  border-radius: 6px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+#hud .craft-menu .build-row:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#hud .craft-menu .build-row:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+#hud .craft-menu .build-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+#hud .craft-menu .build-icon {
+  font-size: 22px;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 26px;
+  text-align: center;
+}
+
+#hud .craft-menu .build-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+#hud .craft-menu .build-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#hud .craft-menu .build-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#hud .craft-menu .build-badge {
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+#hud .craft-menu .build-desc {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+#hud .craft-menu .cost-pills {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+#hud .craft-menu .cost-pill {
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+#hud .craft-menu .cost-pill.insufficient {
+  background: rgba(192, 57, 57, 0.35);
+  color: #ffb3b3;
 }
 
 #hud .building-info {

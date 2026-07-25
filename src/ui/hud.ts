@@ -9,6 +9,28 @@ const RESOURCE_LABEL: Record<ResourceType, string> = {
   food: "🍞 Food",
 };
 
+const RESOURCE_ICON: Record<ResourceType, string> = {
+  wood: "🪵",
+  stone: "🪨",
+  food: "🍞",
+};
+
+const BUILDING_ICON: Record<string, string> = {
+  town_center: "🏛️",
+  house: "🏠",
+  farm: "🌾",
+  mill: "⚙️",
+  lumber_camp: "🪓",
+  mining_camp: "⛏️",
+  blacksmith: "🔨",
+  barracks: "⚔️",
+  archery_range: "🏹",
+  stable: "🐎",
+  market: "💱",
+  outpost: "🗼",
+  castle: "🏰",
+};
+
 export interface SelectionAction {
   label: string;
   disabled: boolean;
@@ -417,31 +439,41 @@ export class Hud {
   private renderBuildMenu() {
     const rows = BUILDINGS.filter((b) => !b.hidden)
       .map((building) => {
-        const costText = Object.entries(building.cost)
-          .map(([type, amt]) => `${amt} ${RESOURCE_LABEL[type as ResourceType]}`)
-          .join(", ");
+        const costPills = Object.entries(building.cost)
+          .map(([type, amt]) => {
+            const insufficient = !this.inventory.has(type as ResourceType, amt ?? 0);
+            return `<span class="cost-pill${insufficient ? " insufficient" : ""}">${amt} ${RESOURCE_ICON[type as ResourceType]}</span>`;
+          })
+          .join("");
         const owned = this.buildManager.countBuilt(building.id);
         const maxedOut = building.maxBuilt !== undefined && owned >= building.maxBuilt;
         const townCenterMissing =
           building.requiresTownCenter && this.buildManager.countBuilt("town_center") === 0;
         const canBuild = this.buildManager.canBuild(building);
 
-        let buttonLabel = "Place";
-        if (maxedOut) buttonLabel = "Built";
-        else if (townCenterMissing) buttonLabel = "Need Town Center";
+        let badge = "";
+        if (maxedOut) badge = `<span class="build-badge">Built</span>`;
+        else if (townCenterMissing) badge = `<span class="build-badge">Need Town Center</span>`;
 
         return `
-          <div class="recipe">
-            <span>${building.name}<br><small>${building.description}</small><br><small>${costText}</small></span>
-            <button data-id="${building.id}" ${canBuild ? "" : "disabled"}>${buttonLabel}</button>
-          </div>
+          <button class="build-row" data-id="${building.id}" ${canBuild ? "" : "disabled"}>
+            <span class="build-icon">${BUILDING_ICON[building.id] ?? "🏗️"}</span>
+            <span class="build-main">
+              <span class="build-title-row">
+                <span class="build-name">${building.name}</span>
+                ${badge}
+              </span>
+              <span class="build-desc">${building.description}</span>
+              <span class="cost-pills">${costPills}</span>
+            </span>
+          </button>
         `;
       })
       .join("");
 
     this.buildMenuEl.innerHTML = `<h2>Build <button class="menu-close">✕</button></h2>${rows}`;
     this.buildMenuEl.querySelector(".menu-close")!.addEventListener("click", () => this.toggleBuildMenu());
-    this.buildMenuEl.querySelectorAll<HTMLButtonElement>(".recipe button").forEach((btn) => {
+    this.buildMenuEl.querySelectorAll<HTMLButtonElement>(".build-row").forEach((btn) => {
       btn.addEventListener("click", () => {
         const building = BUILDINGS.find((b) => b.id === btn.dataset.id);
         if (building) {

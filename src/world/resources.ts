@@ -65,14 +65,45 @@ function createRockMesh(): THREE.Object3D {
 }
 
 function createBushMesh(): THREE.Object3D {
-  const bush = new THREE.Mesh(
-    new THREE.SphereGeometry(0.45, 8, 6),
-    new THREE.MeshStandardMaterial({ color: 0x4a7c3f, flatShading: true }),
-  );
-  bush.position.y = 0.35;
-  bush.scale.y = 0.7;
-  bush.castShadow = true;
-  return bush;
+  const group = new THREE.Group();
+  const foliageMat = new THREE.MeshStandardMaterial({ color: 0x4a7c3f, flatShading: true });
+
+  // Several overlapping lumps read as a fuller bush than one sphere.
+  const lumps: [number, number, number, number][] = [
+    [0, 0.32, 0, 0.42],
+    [0.28, 0.24, 0.1, 0.3],
+    [-0.26, 0.22, -0.14, 0.28],
+    [0.05, 0.24, -0.28, 0.27],
+  ];
+  for (const [x, y, z, radius] of lumps) {
+    const lump = new THREE.Mesh(new THREE.SphereGeometry(radius, 8, 6), foliageMat);
+    lump.position.set(x, y, z);
+    lump.scale.y = 0.75;
+    lump.castShadow = true;
+    group.add(lump);
+  }
+
+  // Bright berries dotted across the foliage make it read as "food" at a glance.
+  const berryMat = new THREE.MeshStandardMaterial({
+    color: 0xd6335c,
+    emissive: 0x8a0f2c,
+    emissiveIntensity: 0.3,
+  });
+  const berrySpots: [number, number, number][] = [
+    [0.15, 0.5, 0.18],
+    [-0.18, 0.46, 0.08],
+    [0.32, 0.36, -0.05],
+    [-0.3, 0.34, -0.2],
+    [0.02, 0.4, -0.32],
+    [0.1, 0.3, 0.3],
+  ];
+  for (const [x, y, z] of berrySpots) {
+    const berry = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), berryMat);
+    berry.position.set(x, y, z);
+    group.add(berry);
+  }
+
+  return group;
 }
 
 function meshFactory(type: ResourceType): THREE.Object3D {

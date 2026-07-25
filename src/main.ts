@@ -23,6 +23,15 @@ import {
   type BuildingDef,
 } from "./systems/building";
 import { TownBuildings, type PlacedBuilding } from "./systems/townBuildings";
+import {
+  MAX_QUEUE,
+  enqueueUnit,
+  cancelQueued,
+  advanceProduction,
+  contributeBuild as applyBuildWork,
+  fullRepairCost,
+  repairBuilding as applyRepair,
+} from "./systems/production";
 import { createLighting } from "./systems/lighting";
 import { createComposer } from "./systems/postfx";
 import { RtsCamera } from "./systems/rtsCamera";
@@ -109,24 +118,7 @@ function beginConstruction(placed: PlacedBuilding, progress = 0) {
   setConstructionAppearance(placed.mesh, progress);
 }
 
-/** Villager work tick. Progress is per villager-second, so several builders
- * on one site finish it proportionally faster. */
-function contributeBuild(site: { position: THREE.Vector3; underConstruction: boolean }, delta: number) {
-  const building = site as PlacedBuilding;
-  if (!building.underConstruction) return;
-  building.buildProgress += delta / building.def.buildTime;
-  if (building.buildProgress >= 1) {
-    finishConstruction(building);
-    return;
-  }
-  building.hp = Math.max(1, building.maxHp * building.buildProgress);
-  setConstructionAppearance(building.mesh, building.buildProgress);
-}
-
 function finishConstruction(building: PlacedBuilding) {
-  building.underConstruction = false;
-  building.buildProgress = 1;
-  building.hp = building.maxHp;
   setConstructionAppearance(building.mesh, 1);
   registerBuildingBehavior(building);
 
@@ -164,8 +156,25 @@ function makeWolf(at: THREE.Vector3): Wolf {
   return wolf;
 }
 
+function onVillagerBuildTick(
+  site: { position: THREE.Vector3; underConstruction: boolean },
+  delta: number,
+) {
+  const building = site as PlacedBuilding;
+  const completed = applyBuildWork(building, delta);
+  setConstructionAppearance(building.mesh, building.buildProgress);
+  if (completed) finishConstruction(building);
+}
+
 function makeVillager(at: THREE.Vector3): Villager {
-  return new Villager(scene, at, resources, inventory, gatherBonus, contributeBuild);
+  return new Villager(
+    scene,
+    at,
+    resources,
+    inventory,
+    gatherBonus,
+    onVillagerBuildTick,
+  );
 }
 
 let villagers: Villager[] = [];
@@ -347,8 +356,6 @@ function resolveBuildingFromHit(hit: THREE.Object3D): PlacedBuilding | null {
 }
 
 /** Builds the info panel content for whatever is currently selected, if anything. */
-const REPAIR_WOOD_PER_HP = 0.25;
-
 function unitLabel(unit: UnitKind | "villager"): string {
   return unit === "villager" ? "Villager" : getUnitStats(unit).label;
 }
@@ -358,44 +365,6 @@ function unitIcon(unit: UnitKind | "villager"): string {
   if (unit === "archer") return "🏹";
   if (unit === "scout") return "🐎";
   return "🛡️";
-}
-
-/** How many units a single building may have pending. */
-const MAX_QUEUE = 10;
-
-/** Adds a unit to a building's production queue. Following AoE2, the cost is
- * charged the moment it's queued rather than when training starts — so a deep
- * queue locks resources up front, and cancelling gives them back. */
-function enqueueUnit(building: PlacedBuilding) {
-  const trains = building.def.trains;
-  if (!trains || building.queue.length >= MAX_QUEUE) return;
-  if (!inventory.has("food", trains.foodCost)) return;
-  inventory.spend("food", trains.foodCost);
-  building.queue.push(trains.unit);
-}
-
-/** Removes a queued unit and refunds what was paid for it. Cancelling the
- * one in progress abandons its timer; the next in line starts fresh. */
-function cancelQueued(building: PlacedBuilding, index: number) {
-  const trains = building.def.trains;
-  if (!trains || index < 0 || index >= building.queue.length) return;
-  building.queue.splice(index, 1);
-  inventory.add("food", trains.foodCost);
-  if (index === 0) building.producingUntil = undefined;
-}
-
-/** Spends whatever wood is available (up to the full repair cost) and
- * restores a proportional amount of HP — so repairing isn't all-or-nothing;
- * players can top up a building bit by bit as wood comes in. */
-function repairBuilding(building: PlacedBuilding) {
-  const missing = building.maxHp - building.hp;
-  if (missing <= 0) return;
-  const fullCost = Math.max(1, Math.ceil(missing * REPAIR_WOOD_PER_HP));
-  const spend = Math.min(fullCost, inventory.get("wood"));
-  if (spend <= 0) return;
-  inventory.spend("wood", spend);
-  const healed = Math.min(missing, spend / REPAIR_WOOD_PER_HP);
-  building.hp = Math.min(building.maxHp, building.hp + healed);
 }
 
 // AoE2 splits a villager's Build menu into economic and military pages.
@@ -471,7 +440,7 @@ function buildingCommands(building: PlacedBuilding): CommandButton[] {
       tooltip: queueFull
         ? `Queue is full (${MAX_QUEUE})`
         : `Train ${unitLabel(trains.unit)} — ${trains.foodCost} food, charged now`,
-      onClick: () => enqueueUnit(building),
+      onClick: () => enqueueUnit(building, inventory),
     });
   }
 
@@ -493,10 +462,7 @@ function buildingCommands(building: PlacedBuilding): CommandButton[] {
   }
 
   if (building.hp < building.maxHp) {
-    const fullCost = Math.max(
-      1,
-      Math.ceil((building.maxHp - building.hp) * REPAIR_WOOD_PER_HP),
-    );
+    const fullCost = fullRepairCost(building);
     const spend = Math.min(fullCost, inventory.get("wood"));
     commands.push({
       icon: "🔧",
@@ -507,7 +473,7 @@ function buildingCommands(building: PlacedBuilding): CommandButton[] {
         spend >= fullCost
           ? `Repair fully for ${fullCost} wood`
           : `Partial repair with ${spend} of ${fullCost} wood`,
-      onClick: () => repairBuilding(building),
+      onClick: () => applyRepair(building, inventory),
     });
   }
 
@@ -576,7 +542,7 @@ function buildSelectionInfo(): SelectionInfo | null {
                   ).toFixed(1)}s` +
                   (building.queue.length > 1 ? ` (+${building.queue.length - 1} queued)` : "")
                 : null,
-            onCancel: (i: number) => cancelQueued(building, i),
+            onCancel: (i: number) => cancelQueued(building, inventory, i),
           }
         : undefined,
     };
@@ -1039,30 +1005,12 @@ function animate() {
   }
 
   for (const building of townBuildings.list) {
-    const trains = building.def.trains;
-    if (!trains || building.underConstruction) continue;
-    // Start the next queued unit whenever the building is idle.
-    if (building.producingUntil === undefined && building.queue.length > 0) {
-      building.producingUntil = time + trains.time;
-    }
-    if (
-      building.producingUntil !== undefined &&
-      time >= building.producingUntil
-    ) {
-      const unit = building.queue.shift();
-      building.producingUntil = undefined;
-      if (unit === "villager") {
-        const villager = new Villager(
-          scene,
-          building.position,
-          resources,
-          inventory,
-          gatherBonus,
-        );
-        villagers.push(villager);
-      } else if (unit) {
-        soldiers.push(makeSoldier(building.position, unit));
-      }
+    const finished = advanceProduction(building, time);
+    if (!finished) continue;
+    if (finished === "villager") {
+      villagers.push(makeVillager(building.position));
+    } else {
+      soldiers.push(makeSoldier(building.position, finished));
     }
   }
 
@@ -1155,5 +1103,66 @@ function animate() {
   composer.render();
   requestAnimationFrame(animate);
 }
+
+/**
+ * Live state handle for debugging and automated checks. Without it, the only
+ * window into a running game is the autosave in localStorage — which lags by
+ * up to the autosave interval and has already led to "diagnosing" stale data
+ * as a bug. Nothing in the game reads from here; it's an outbound view only.
+ */
+declare global {
+  interface Window {
+    __game: unknown;
+  }
+}
+window.__game = {
+  get villagers() {
+    return villagers;
+  },
+  get soldiers() {
+    return soldiers;
+  },
+  get wolves() {
+    return wolves;
+  },
+  get buildings() {
+    return townBuildings.list;
+  },
+  get selection() {
+    return {
+      villagers: selectedVillagers,
+      soldiers: selectedSoldiers,
+      building: selectedBuildingInfo,
+    };
+  },
+  get resources() {
+    return inventory.getAll();
+  },
+  get wave() {
+    return { waveNumber, nextWaveAt, now: clock.getElapsedTime() };
+  },
+  /** Compact, JSON-safe snapshot that's cheap to log and easy to assert on. */
+  summary() {
+    return {
+      time: +clock.getElapsedTime().toFixed(1),
+      resources: inventory.getAll(),
+      villagers: villagers.length,
+      soldiers: soldiers.length,
+      wolves: wolves.filter((w) => w.alive).length,
+      selected: {
+        villagers: selectedVillagers.length,
+        soldiers: selectedSoldiers.length,
+        building: selectedBuildingInfo?.type ?? null,
+      },
+      buildings: townBuildings.list.map((b) => ({
+        type: b.type,
+        hp: Math.round(b.hp),
+        underConstruction: b.underConstruction,
+        progress: +b.buildProgress.toFixed(2),
+        queue: [...b.queue],
+      })),
+    };
+  },
+};
 
 requestAnimationFrame(animate);

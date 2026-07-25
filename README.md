@@ -49,3 +49,30 @@ src/
   world/                # terrain, resources, villagers, wolves, buildings
   ui/                    # HUD (inventory, menus, prompts)
 ```
+
+## Testing
+
+```bash
+npm test          # run the unit tests once
+npm run test:watch
+```
+
+Game rules with real bookkeeping — the production queue, construction
+progress and repair costs — live in `src/systems/production.ts`, deliberately
+free of rendering and global state so they can be tested directly
+(`src/systems/production.test.ts`). These are the parts where a mistake is
+invisible on screen until it has already cost the player resources, so they
+get assertions rather than eyeballing.
+
+### Inspecting a running game
+
+A live state handle is exposed on `window.__game`, which is far more reliable
+than reading the `localStorage` autosave (that lags behind by up to the
+autosave interval):
+
+```js
+__game.summary()    // compact snapshot: resources, unit counts, every building
+__game.buildings    // live PlacedBuilding objects
+__game.selection    // what's currently selected
+__game.wave         // wave number and time until the next one
+```

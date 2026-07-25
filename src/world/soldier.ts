@@ -56,12 +56,19 @@ export function getUnitStats(kind: UnitKind): UnitPreset {
 }
 
 const WANDER_RADIUS = 2.5;
+const ATTACK_ANIM_TIME = 0.35;
+/** Beyond this reach a unit shoots rather than swings. */
+const RANGED_THRESHOLD = 2;
 
 /** An autonomous defender trained by Barracks/Archery Range/Stable: patrols
  * near home and engages any wolf within leash range — no player commands. */
 export class Soldier {
   readonly model: THREE.Group;
   readonly kind: UnitKind;
+  /** Fired when an attack lands: (from, to, ranged). Lets main draw an arrow
+   * for shooters or a slash for melee, without world code owning effects. */
+  onAttack: ((from: THREE.Vector3, to: THREE.Vector3, ranged: boolean) => void) | null =
+    null;
   hp: number;
   alive = true;
 
@@ -72,6 +79,9 @@ export class Soldier {
   private wanderTarget: THREE.Vector3;
   private wanderWaitUntil = 0;
   private selectionRing: THREE.Mesh;
+  private visual: THREE.Group;
+  private weapon: THREE.Mesh;
+  private attackAnim = 0;
   /** Player-issued move order; cleared on arrival. */
   private moveOrder: THREE.Vector3 | null = null;
   /** Player-issued attack target, chased regardless of leash range. */
@@ -83,7 +93,10 @@ export class Soldier {
     this.hp = this.stats.maxHp;
     this.home = home.clone();
     this.wanderTarget = home.clone();
-    this.model = createUnitModel(this.stats);
+    this.model = new THREE.Group();
+    this.visual = createUnitModel(this.stats, kind);
+    this.weapon = this.visual.userData.weapon as THREE.Mesh;
+    this.model.add(this.visual);
     this.model.position.copy(home);
     this.model.userData.soldier = this;
     scene.add(this.model);
@@ -121,8 +134,13 @@ export class Soldier {
     this.orderedTarget = wolf;
   }
 
+  get isRanged(): boolean {
+    return this.stats.attackRange > RANGED_THRESHOLD;
+  }
+
   update(delta: number, now: number, wolves: Wolf[]) {
     if (!this.alive) return;
+    this.updateAttackAnim(delta);
 
     // An explicit move order takes priority over engaging anything.
     if (this.moveOrder) {
@@ -143,6 +161,16 @@ export class Soldier {
       } else if (now >= this.attackReadyAt) {
         target.takeDamage(this.stats.attackDamage);
         this.attackReadyAt = now + this.stats.attackCooldown;
+        this.attackAnim = 1;
+        this.model.rotation.y = Math.atan2(
+          target.model.position.x - this.model.position.x,
+          target.model.position.z - this.model.position.z,
+        );
+        this.onAttack?.(
+          this.model.position.clone().add(new THREE.Vector3(0, 1.1, 0)),
+          target.model.position.clone().add(new THREE.Vector3(0, 0.4, 0)),
+          this.isRanged,
+        );
       }
       this.syncHealthBarPosition();
       return;
@@ -190,6 +218,22 @@ export class Soldier {
     return nearest;
   }
 
+  /** Melee units wind up and swing their weapon; shooters draw and release. */
+  private updateAttackAnim(delta: number) {
+    if (this.attackAnim <= 0) return;
+    this.attackAnim = Math.max(0, this.attackAnim - delta / ATTACK_ANIM_TIME);
+    const swing = Math.sin(this.attackAnim * Math.PI);
+    if (this.isRanged) {
+      // Bow arm punches forward on release.
+      this.weapon.position.z = swing * 0.3;
+      this.visual.position.z = swing * 0.08;
+    } else {
+      // Overhead chop, with a small step into the blow.
+      this.weapon.rotation.z = -0.35 - swing * 1.9;
+      this.visual.position.z = swing * 0.28;
+    }
+  }
+
   private syncHealthBarPosition() {
     this.healthBar.group.position.set(
       this.model.position.x,
@@ -230,7 +274,7 @@ function createSelectionRing(): THREE.Mesh {
   return ring;
 }
 
-function createUnitModel(stats: UnitPreset): THREE.Group {
+function createUnitModel(stats: UnitPreset, kind: UnitKind): THREE.Group {
   const group = new THREE.Group();
   const armorMat = new THREE.MeshStandardMaterial({ color: stats.armorColor });
   const skinMat = new THREE.MeshStandardMaterial({ color: 0xd8a888 });
@@ -245,12 +289,21 @@ function createUnitModel(stats: UnitPreset): THREE.Group {
   head.castShadow = true;
   group.add(head);
 
-  const weaponMat = new THREE.MeshStandardMaterial({ color: 0xcfcfd6, metalness: 0.4, roughness: 0.4 });
-  const weapon = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.65, 0.06), weaponMat);
+  const ranged = stats.attackRange > RANGED_THRESHOLD;
+  const weaponMat = new THREE.MeshStandardMaterial({
+    color: ranged ? 0x8a6a3a : 0xcfcfd6,
+    metalness: ranged ? 0 : 0.4,
+    roughness: ranged ? 0.8 : 0.4,
+  });
+  const weapon = ranged
+    ? new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.03, 6, 10, Math.PI * 1.1), weaponMat)
+    : new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.65, 0.06), weaponMat);
   weapon.position.set(0.34, 0.85, 0);
-  weapon.rotation.z = -0.35;
+  weapon.rotation.z = ranged ? Math.PI / 2 : -0.35;
   weapon.castShadow = true;
   group.add(weapon);
+  group.userData.weapon = weapon;
 
+  void kind;
   return group;
 }

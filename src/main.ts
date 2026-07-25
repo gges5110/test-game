@@ -13,6 +13,7 @@ import type { HealthBar } from "./world/healthBar";
 import { Villager } from "./world/villager";
 import { Soldier, getUnitStats, type UnitKind } from "./world/soldier";
 import { Wolf } from "./world/enemy";
+import { Effects } from "./world/effects";
 import { Inventory } from "./systems/inventory";
 import { Crafting, RECIPES } from "./systems/crafting";
 import {
@@ -75,6 +76,7 @@ const buildManager = new BuildManager(inventory);
 const crafting = new Crafting(inventory, buildManager);
 const hud = new Hud(hudRoot, inventory);
 const townBuildings = new TownBuildings();
+const effects = new Effects(scene);
 
 function gatherBonus(type: Parameters<typeof crafting.gatherBonus>[0]) {
   return crafting.gatherBonus(type);
@@ -140,6 +142,28 @@ function finishConstruction(building: PlacedBuilding) {
   }
 }
 
+function makeSoldier(at: THREE.Vector3, kind: UnitKind): Soldier {
+  const soldier = new Soldier(scene, at, kind);
+  soldier.onAttack = (from, to, ranged) => {
+    if (ranged) {
+      effects.fireArrow(from, to);
+    } else {
+      effects.slash(to, soldier.model.rotation.y);
+      effects.impact(to, 0xffe6a6);
+    }
+  };
+  return soldier;
+}
+
+function makeWolf(at: THREE.Vector3): Wolf {
+  const wolf = new Wolf(scene, at);
+  wolf.onBite = (bite) => {
+    effects.slash(bite, wolf.model.rotation.y, 0xff8a8a);
+    effects.impact(bite, 0xd66a4a);
+  };
+  return wolf;
+}
+
 function makeVillager(at: THREE.Vector3): Villager {
   return new Villager(scene, at, resources, inventory, gatherBonus, contributeBuild);
 }
@@ -185,8 +209,7 @@ if (savedGame) {
     villagers.push(villager);
   }
   for (const s of savedGame.soldiers ?? []) {
-    const soldier = new Soldier(
-      scene,
+    const soldier = makeSoldier(
       new THREE.Vector3(s.homeX, heightAt(s.homeX, s.homeZ), s.homeZ),
       s.kind,
     );
@@ -903,29 +926,6 @@ rtsCamera.setOnBoxSelect((rect, final) => {
   }
 });
 
-const BEAM_DURATION = 0.15;
-
-let attackEffects: { mesh: THREE.Mesh; expiresAt: number }[] = [];
-
-function spawnAttackBeam(from: THREE.Vector3, to: THREE.Vector3, now: number) {
-  const dir = new THREE.Vector3().subVectors(to, from);
-  const length = dir.length();
-  const geometry = new THREE.CylinderGeometry(0.035, 0.035, length, 6);
-  const material = new THREE.MeshBasicMaterial({
-    color: 0xffdd55,
-    transparent: true,
-    opacity: 0.9,
-  });
-  const beam = new THREE.Mesh(geometry, material);
-  beam.position.copy(from).add(to).multiplyScalar(0.5);
-  beam.quaternion.setFromUnitVectors(
-    new THREE.Vector3(0, 1, 0),
-    dir.normalize(),
-  );
-  scene.add(beam);
-  attackEffects.push({ mesh: beam, expiresAt: now + BEAM_DURATION });
-}
-
 // Wolves spawn in escalating waves and beeline for the nearest building —
 // walls and towers are the town's only defense (no player avatar to fight).
 let wolves: Wolf[] = [];
@@ -943,7 +943,7 @@ function spawnWave() {
     const dist = 60 + Math.random() * 40;
     const x = Math.cos(angle) * dist;
     const z = Math.sin(angle) * dist;
-    wolves.push(new Wolf(scene, new THREE.Vector3(x, heightAt(x, z), z)));
+    wolves.push(makeWolf(new THREE.Vector3(x, heightAt(x, z), z)));
   }
 }
 
@@ -1014,6 +1014,7 @@ function animate() {
     selectedVillagers.length === 0 && selectedSoldiers.length === 0,
   );
 
+  effects.update(delta);
   resources.update();
   for (const villager of villagers) villager.update(delta, time);
   for (const soldier of soldiers) soldier.update(delta, time, wolves);
@@ -1060,7 +1061,7 @@ function animate() {
         );
         villagers.push(villager);
       } else if (unit) {
-        soldiers.push(new Soldier(scene, building.position, unit));
+        soldiers.push(makeSoldier(building.position, unit));
       }
     }
   }
@@ -1082,27 +1083,15 @@ function animate() {
       if (target) {
         target.takeDamage(damage);
         building.attackReadyAt = time + cooldown;
-        spawnAttackBeam(
+        effects.fireArrow(
           building.position
             .clone()
             .add(new THREE.Vector3(0, building.def.attackOriginY ?? 2, 0)),
-          target.model.position.clone().add(new THREE.Vector3(0, 0.3, 0)),
-          time,
+          target.model.position.clone().add(new THREE.Vector3(0, 0.4, 0)),
         );
       }
     }
   }
-
-  attackEffects = attackEffects.filter((effect) => {
-    const remaining = effect.expiresAt - time;
-    if (remaining <= 0) {
-      scene.remove(effect.mesh);
-      return false;
-    }
-    (effect.mesh.material as THREE.MeshBasicMaterial).opacity =
-      Math.min(1, remaining / 0.15) * 0.9;
-    return true;
-  });
 
   if (time >= nextWaveAt) {
     spawnWave();

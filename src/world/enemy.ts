@@ -9,8 +9,16 @@ const ATTACK_COOLDOWN = 1.1;
 const ATTACK_DAMAGE = 10;
 const MAX_HP = 30;
 
+const ATTACK_ANIM_TIME = 0.35;
+
 export class Wolf {
   readonly model: THREE.Group;
+  /** Inner group holding the meshes, so attack animation can offset the
+   * visuals without disturbing the model position the simulation uses. */
+  private visual: THREE.Group;
+  private attackAnim = 0;
+  /** Set when a bite lands, so main can spawn the hit effect. */
+  onBite: ((at: THREE.Vector3) => void) | null = null;
   hp = MAX_HP;
   alive = true;
 
@@ -18,7 +26,9 @@ export class Wolf {
   private healthBar: HealthBar;
 
   constructor(scene: THREE.Scene, spawnPoint: THREE.Vector3) {
-    this.model = createWolfModel();
+    this.model = new THREE.Group();
+    this.visual = createWolfModel();
+    this.model.add(this.visual);
     this.model.position.copy(spawnPoint);
     scene.add(this.model);
 
@@ -36,6 +46,8 @@ export class Wolf {
     onDamageBuilding: (building: PlacedBuilding, amount: number) => void,
   ) {
     if (!this.alive) return;
+    // Run first so a lunge finishes settling even if the wolf starts moving.
+    this.updateAttackAnim(delta);
 
     const target = townBuildings.findNearest(this.model.position);
     if (!target) return;
@@ -50,7 +62,28 @@ export class Wolf {
     if (now >= this.attackReadyAt) {
       onDamageBuilding(target, ATTACK_DAMAGE);
       this.attackReadyAt = now + ATTACK_COOLDOWN;
+      this.attackAnim = 1;
+      // Bite lands just in front of the wolf's snout.
+      const bite = this.model.position
+        .clone()
+        .add(
+          new THREE.Vector3(
+            Math.sin(this.model.rotation.y),
+            0.5,
+            Math.cos(this.model.rotation.y),
+          ).multiplyScalar(0.8),
+        );
+      this.onBite?.(bite);
     }
+  }
+
+  /** Lunge forward and snap back, so a biting wolf reads as attacking. */
+  private updateAttackAnim(delta: number) {
+    if (this.attackAnim <= 0) return;
+    this.attackAnim = Math.max(0, this.attackAnim - delta / ATTACK_ANIM_TIME);
+    const swing = Math.sin(this.attackAnim * Math.PI);
+    this.visual.position.z = swing * 0.45;
+    this.visual.rotation.x = swing * 0.25;
   }
 
   /** Returns true if this hit killed the wolf. */

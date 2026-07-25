@@ -68,7 +68,12 @@ export class Hud {
     this.selectBoxEl = root.querySelector(".select-box")!;
     this.infoEl = root.querySelector(".building-info")!;
 
-    this.inventory.onChange(() => this.renderInventory());
+    this.inventory.onChange(() => {
+      this.renderInventory();
+      // Re-render open menus so Craft/Place buttons reflect newly available resources.
+      if (this.craftMenuOpen) this.renderCraftMenu();
+      if (this.buildMenuOpen) this.renderBuildMenu();
+    });
     this.renderInventory();
 
     root.querySelector("#craftBtn")!.addEventListener("click", () => {

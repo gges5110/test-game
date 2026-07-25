@@ -404,6 +404,31 @@ export function createBuildingMesh(id: string): THREE.Group {
   return createCastleMesh();
 }
 
+/** Records the building's own meshes before overlays (selection ring, health
+ * bar) are attached, so construction styling can target just the structure. */
+export function captureStructureMeshes(mesh: THREE.Group) {
+  const meshes: THREE.Mesh[] = [];
+  mesh.traverse((child) => {
+    if (child instanceof THREE.Mesh) meshes.push(child);
+  });
+  mesh.userData.structureMeshes = meshes;
+}
+
+/** Renders an unfinished building as a translucent shell that solidifies as
+ * construction progresses. */
+export function setConstructionAppearance(mesh: THREE.Group, progress: number) {
+  const meshes = (mesh.userData.structureMeshes as THREE.Mesh[]) ?? [];
+  const done = progress >= 1;
+  for (const child of meshes) {
+    const material = child.material as THREE.MeshStandardMaterial;
+    material.transparent = !done;
+    material.opacity = done ? 1 : 0.3 + 0.5 * progress;
+    material.depthWrite = done;
+    material.needsUpdate = true;
+    child.castShadow = done;
+  }
+}
+
 /** Adds a hidden selection ring to a building mesh; toggle `.visible` on it. */
 export function attachSelectionRing(mesh: THREE.Group): THREE.Mesh {
   const ring = new THREE.Mesh(

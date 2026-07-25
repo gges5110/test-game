@@ -12,6 +12,11 @@ export interface PlacedBuilding {
   maxHp: number;
   /** Tower attack cooldown timestamp; unused by other building types. */
   attackReadyAt: number;
+  /** True until villagers finish constructing it. An unfinished building
+   * doesn't produce, train or attack. */
+  underConstruction: boolean;
+  /** 0..1 construction progress while underConstruction. */
+  buildProgress: number;
   /** Units queued for production, in order; index 0 is the one currently
    * training. Their cost is already paid — AoE2 deducts at queue time, so
    * cancelling refunds. */
@@ -42,6 +47,8 @@ export class TownBuildings {
       hp: def.maxHp,
       maxHp: def.maxHp,
       attackReadyAt: 0,
+      underConstruction: false,
+      buildProgress: 1,
       queue: [],
     };
     this.list.push(building);

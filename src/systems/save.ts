@@ -11,6 +11,9 @@ export interface SavedBuilding {
   /** Pending production. Persisted so the resources already spent on a
    * queue aren't silently lost across a reload. */
   queue?: (UnitKind | "villager")[];
+  /** Unfinished foundations keep their progress across a reload. */
+  underConstruction?: boolean;
+  buildProgress?: number;
 }
 
 export interface SavedVillager {

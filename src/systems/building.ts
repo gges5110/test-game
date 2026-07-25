@@ -18,6 +18,9 @@ export interface BuildingDef {
   attack?: { range: number; damage: number; cooldown: number };
   /** Height (above the building's base) the attack beam is drawn from. Defaults to 2. */
   attackOriginY?: number;
+  /** Villager-seconds of work needed to construct it. Two villagers halve
+   * the wall-clock time. */
+  buildTime: number;
   /** If set, this building passively produces a resource over time. */
   produces?: { type: ResourceType; amount: number; interval: number };
   /** If set, selecting this building offers a "Train" action that spends
@@ -36,6 +39,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: {},
     description: "Your town's founding building — select it to train Villagers",
     maxHp: 400,
+    buildTime: 30,
     maxBuilt: 1,
     hidden: true,
     trains: { unit: "villager", foodCost: 3, time: 8 },
@@ -46,6 +50,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 5 },
     description: "Spawns a villager who gathers nearby resources",
     maxHp: 100,
+    buildTime: 12,
     requiresTownCenter: true,
   },
   {
@@ -54,6 +59,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 5 },
     description: "+1 food every 8s",
     maxHp: 70,
+    buildTime: 10,
     requiresTownCenter: true,
     produces: { type: "food", amount: 1, interval: 8 },
   },
@@ -63,6 +69,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 8 },
     description: "+1 food every 6s — a sturdier food producer than a Farm",
     maxHp: 90,
+    buildTime: 16,
     requiresTownCenter: true,
     produces: { type: "food", amount: 1, interval: 6 },
   },
@@ -72,6 +79,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 8 },
     description: "+1 wood every 6s",
     maxHp: 90,
+    buildTime: 16,
     requiresTownCenter: true,
     produces: { type: "wood", amount: 1, interval: 6 },
   },
@@ -81,6 +89,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 8 },
     description: "+1 stone every 6s",
     maxHp: 90,
+    buildTime: 16,
     requiresTownCenter: true,
     produces: { type: "stone", amount: 1, interval: 6 },
   },
@@ -90,6 +99,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 9 },
     description: "Unlocks Iron Tool (better gather rate)",
     maxHp: 100,
+    buildTime: 20,
     requiresTownCenter: true,
     maxBuilt: 1,
   },
@@ -99,6 +109,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 10 },
     description: "Select it to train Soldiers, paid for in food",
     maxHp: 110,
+    buildTime: 22,
     requiresTownCenter: true,
     trains: { unit: "soldier", foodCost: 4, time: 14 },
   },
@@ -108,6 +119,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 10 },
     description: "Select it to train Archers, paid for in food",
     maxHp: 100,
+    buildTime: 22,
     requiresTownCenter: true,
     trains: { unit: "archer", foodCost: 4, time: 14 },
   },
@@ -117,6 +129,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 10 },
     description: "Select it to train Scouts, paid for in food",
     maxHp: 100,
+    buildTime: 22,
     requiresTownCenter: true,
     trains: { unit: "scout", foodCost: 4, time: 14 },
   },
@@ -126,6 +139,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 3, stone: 2 },
     description: "Cheap early watchtower — light auto-attack on wolves",
     maxHp: 60,
+    buildTime: 14,
     requiresTownCenter: true,
     attack: { range: 6, damage: 8, cooldown: 1.3 },
     attackOriginY: 2.2,
@@ -136,6 +150,7 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { stone: 22 },
     description: "Your strongest structure — stone-only, huge HP, heavy attack",
     maxHp: 300,
+    buildTime: 40,
     requiresTownCenter: true,
     maxBuilt: 2,
     attack: { range: 15, damage: 35, cooldown: 2 },

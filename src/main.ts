@@ -6,6 +6,8 @@ import {
   makeGhost,
   attachSelectionRing,
   attachHealthBar,
+  captureStructureMeshes,
+  setConstructionAppearance,
 } from "./world/buildings";
 import type { HealthBar } from "./world/healthBar";
 import { Villager } from "./world/villager";
@@ -87,12 +89,59 @@ function spawnBuilding(
   const def = getBuildingDef(id);
   const mesh = createBuildingMesh(id);
   mesh.position.set(x, heightAt(x, z), z);
+  captureStructureMeshes(mesh);
   attachSelectionRing(mesh);
   attachHealthBar(mesh);
   scene.add(mesh);
   const placed = townBuildings.add(id, def, mesh, mesh.position);
   if (hp !== undefined) placed.hp = hp;
   return placed;
+}
+
+/** Puts a freshly placed building into its unfinished state: a translucent
+ * shell with a sliver of HP that villagers have to work up to completion. */
+function beginConstruction(placed: PlacedBuilding, progress = 0) {
+  placed.underConstruction = true;
+  placed.buildProgress = progress;
+  placed.hp = Math.max(1, placed.maxHp * Math.max(progress, 0.05));
+  setConstructionAppearance(placed.mesh, progress);
+}
+
+/** Villager work tick. Progress is per villager-second, so several builders
+ * on one site finish it proportionally faster. */
+function contributeBuild(site: { position: THREE.Vector3; underConstruction: boolean }, delta: number) {
+  const building = site as PlacedBuilding;
+  if (!building.underConstruction) return;
+  building.buildProgress += delta / building.def.buildTime;
+  if (building.buildProgress >= 1) {
+    finishConstruction(building);
+    return;
+  }
+  building.hp = Math.max(1, building.maxHp * building.buildProgress);
+  setConstructionAppearance(building.mesh, building.buildProgress);
+}
+
+function finishConstruction(building: PlacedBuilding) {
+  building.underConstruction = false;
+  building.buildProgress = 1;
+  building.hp = building.maxHp;
+  setConstructionAppearance(building.mesh, 1);
+  registerBuildingBehavior(building);
+
+  // A finished House brings its villager with it.
+  if (building.type === "house") {
+    const villager = makeVillager(building.position);
+    villagers.push(villager);
+    building.onDestroyed = () => {
+      scene.remove(villager.model);
+      villagers = villagers.filter((v) => v !== villager);
+      selectedVillagers = selectedVillagers.filter((v) => v !== villager);
+    };
+  }
+}
+
+function makeVillager(at: THREE.Vector3): Villager {
+  return new Villager(scene, at, resources, inventory, gatherBonus, contributeBuild);
 }
 
 let villagers: Villager[] = [];
@@ -122,15 +171,15 @@ if (savedGame) {
     if (!BUILDINGS.some((def) => def.id === b.type)) continue;
     const placed = spawnBuilding(b.type, b.x, b.z, b.hp);
     placed.queue = b.queue ? [...b.queue] : [];
-    registerBuildingBehavior(placed);
+    if (b.underConstruction) {
+      beginConstruction(placed, b.buildProgress ?? 0);
+    } else {
+      registerBuildingBehavior(placed);
+    }
   }
   for (const v of savedGame.villagers) {
-    const villager = new Villager(
-      scene,
+    const villager = makeVillager(
       new THREE.Vector3(v.homeX, heightAt(v.homeX, v.homeZ), v.homeZ),
-      resources,
-      inventory,
-      gatherBonus,
     );
     villager.model.position.set(v.x, heightAt(v.x, v.z), v.z);
     villagers.push(villager);
@@ -171,15 +220,7 @@ if (savedGame) {
     const angle = (i / 3) * Math.PI * 2;
     const x = Math.cos(angle) * 3;
     const z = Math.sin(angle) * 3;
-    villagers.push(
-      new Villager(
-        scene,
-        new THREE.Vector3(x, heightAt(x, z), z),
-        resources,
-        inventory,
-        gatherBonus,
-      ),
-    );
+    villagers.push(makeVillager(new THREE.Vector3(x, heightAt(x, z), z)));
   }
 
   inventory.add("wood", 8);
@@ -393,6 +434,7 @@ function villagerCommands(): CommandButton[] {
 function buildingCommands(building: PlacedBuilding): CommandButton[] {
   const commands: CommandButton[] = [];
   const def = building.def;
+  if (building.underConstruction) return commands;
 
   if (def.trains) {
     const trains = def.trains;
@@ -462,8 +504,30 @@ function buildSelectionInfo(): SelectionInfo | null {
       : [];
 
     const trains = def.trains;
+    const building_ = building;
+    if (building_.underConstruction) {
+      const builders = villagers.filter((v) => v.isBuilding(building_)).length;
+      return {
+        key: building,
+        variant: "site",
+        title: `${def.name} (site)`,
+        portrait: "🚧",
+        description:
+          builders > 0
+            ? `Under construction — ${builders} villager${builders > 1 ? "s" : ""} working. Right-click the site with villagers selected to add more.`
+            : "Construction stalled — no villagers assigned. Select villagers and right-click the site to build it.",
+        hp: building.hp,
+        maxHp: building.maxHp,
+        stats: [
+          ["🚧 Progress", `${Math.floor(building.buildProgress * 100)}%`],
+          ["👷 Builders", `${builders}`],
+        ],
+        commands: [],
+      };
+    }
     return {
       key: building,
+      variant: "built",
       title: def.name,
       portrait: BUILDING_ICON[def.id] ?? "🏗️",
       description: def.description,
@@ -625,23 +689,9 @@ function confirmPlacement() {
     ghost.position.z,
   );
 
-  if (selectedBuildingType.id === "house") {
-    const villager = new Villager(
-      scene,
-      placed.position,
-      resources,
-      inventory,
-      gatherBonus,
-    );
-    villagers.push(villager);
-    placed.onDestroyed = () => {
-      scene.remove(villager.model);
-      villagers = villagers.filter((v) => v !== villager);
-      selectedVillagers = selectedVillagers.filter((v) => v !== villager);
-    };
-  } else {
-    registerBuildingBehavior(placed);
-  }
+  // Placing only lays a foundation — it stays inert until villagers build it.
+  beginConstruction(placed);
+  for (const v of selectedVillagers) v.commandBuild(placed);
 
   cancelPlacement();
 }
@@ -683,6 +733,23 @@ function commandSelectedUnits(sx: number, sy: number) {
       const wolf = resolveWolfFromHit(wolfHit);
       if (wolf) {
         for (const s of selectedSoldiers) s.commandAttack(wolf);
+        return;
+      }
+    }
+  }
+
+  // Right-clicking an unfinished building sends villagers to work on it —
+  // the way to resume a site whose builders were killed or reassigned.
+  if (selectedVillagers.length > 0) {
+    const siteHit = rtsCamera.raycastObjects(
+      sx,
+      sy,
+      townBuildings.list.filter((b) => b.underConstruction).map((b) => b.mesh),
+    );
+    if (siteHit) {
+      const site = resolveBuildingFromHit(siteHit);
+      if (site && site.underConstruction) {
+        for (const v of selectedVillagers) v.commandBuild(site);
         return;
       }
     }
@@ -901,6 +968,8 @@ function collectSaveData(): SaveData {
       z: b.position.z,
       hp: b.hp,
       queue: [...b.queue],
+      underConstruction: b.underConstruction,
+      buildProgress: b.buildProgress,
     })),
     villagers: villagers.map((v) => ({
       x: v.model.position.x,
@@ -970,7 +1039,7 @@ function animate() {
 
   for (const building of townBuildings.list) {
     const trains = building.def.trains;
-    if (!trains) continue;
+    if (!trains || building.underConstruction) continue;
     // Start the next queued unit whenever the building is idle.
     if (building.producingUntil === undefined && building.queue.length > 0) {
       building.producingUntil = time + trains.time;
@@ -1000,7 +1069,11 @@ function animate() {
     const bar = building.mesh.userData.healthBar as HealthBar | undefined;
     bar?.setFraction(building.hp / building.maxHp);
 
-    if (building.def.attack && time >= building.attackReadyAt) {
+    if (
+      building.def.attack &&
+      !building.underConstruction &&
+      time >= building.attackReadyAt
+    ) {
       const { range, damage, cooldown } = building.def.attack;
       const target = wolves.find(
         (w) =>

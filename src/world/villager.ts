@@ -8,8 +8,23 @@ const JOB_SEARCH_RADIUS = 25;
 const SPEED = 1.6;
 const ARRIVE_DIST = 0.3;
 const GATHER_DURATION = 1.2;
+const BUILD_RANGE = 1.8;
 
-type State = "idle" | "toResource" | "gathering" | "toHome" | "moving";
+type State =
+  | "idle"
+  | "toResource"
+  | "gathering"
+  | "toHome"
+  | "moving"
+  | "toBuild"
+  | "building";
+
+/** What a villager needs to know about a construction site. PlacedBuilding
+ * satisfies this structurally, without villager.ts depending on it. */
+export interface ConstructionSite {
+  position: THREE.Vector3;
+  underConstruction: boolean;
+}
 
 export class Villager {
   readonly model: THREE.Group;
@@ -22,6 +37,7 @@ export class Villager {
 
   private state: State = "idle";
   private targetNode: ResourceNode | null = null;
+  private buildSite: ConstructionSite | null = null;
   private gatherEndsAt = 0;
   private carrying: ResourceType | null = null;
 
@@ -31,6 +47,7 @@ export class Villager {
     private resources: ResourceManager,
     private inventory: Inventory,
     private getGatherBonus: (type: ResourceType) => number,
+    private onBuildTick: (site: ConstructionSite, delta: number) => void = () => {},
   ) {
     this.home = home.clone();
     this.wanderTarget = home.clone();
@@ -63,6 +80,18 @@ export class Villager {
     this.state = "moving";
   }
 
+  /** True if this villager is heading to or working on the given site. */
+  isBuilding(site: ConstructionSite): boolean {
+    return this.buildSite === site;
+  }
+
+  /** Player-issued: walk to a construction site and work on it until done. */
+  commandBuild(site: ConstructionSite) {
+    this.releaseJob();
+    this.buildSite = site;
+    this.state = "toBuild";
+  }
+
   /** Player-issued: go gather a specific node, overriding auto job search. */
   commandGather(node: ResourceNode) {
     if (node.depleted) return;
@@ -73,8 +102,15 @@ export class Villager {
   }
 
   update(delta: number, now: number) {
-    this.workIndicator.visible = this.state === "gathering";
+    this.workIndicator.visible =
+      this.state === "gathering" || this.state === "building";
     switch (this.state) {
+      case "toBuild":
+        this.updateToBuild(delta);
+        return;
+      case "building":
+        this.updateBuilding(delta, now);
+        return;
       case "toResource":
         this.updateToResource(delta, now);
         return;
@@ -90,6 +126,32 @@ export class Villager {
       default:
         this.updateIdle(delta, now);
     }
+  }
+
+  private updateToBuild(delta: number) {
+    const site = this.buildSite;
+    if (!site || !site.underConstruction) {
+      this.buildSite = null;
+      this.state = "idle";
+      return;
+    }
+    this.moveToward(site.position, delta);
+    // Stop at the edge rather than walking into the footprint.
+    if (this.model.position.distanceTo(site.position) <= BUILD_RANGE) {
+      this.state = "building";
+    }
+  }
+
+  private updateBuilding(delta: number, now: number) {
+    const site = this.buildSite;
+    if (!site || !site.underConstruction) {
+      this.buildSite = null;
+      this.state = "idle";
+      return;
+    }
+    this.workIndicator.position.y = 1.55 + Math.sin(now * 9) * 0.1;
+    this.workIndicator.rotation.y = now * 4;
+    this.onBuildTick(site, delta);
   }
 
   private updateMoving(delta: number) {
@@ -160,6 +222,7 @@ export class Villager {
   private releaseJob() {
     if (this.targetNode) this.resources.release(this.targetNode);
     this.targetNode = null;
+    this.buildSite = null;
   }
 
   private moveToward(point: THREE.Vector3, delta: number) {

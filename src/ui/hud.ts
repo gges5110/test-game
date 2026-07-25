@@ -58,6 +58,9 @@ export interface SelectionInfo {
    * every ~16ms, which defeats CSS :hover/:active (they need a persistent
    * node) even though click still worked via delegation. */
   key: unknown;
+  /** Distinguishes states of the *same* key that need a full re-render, e.g.
+   * a building switching from construction site to finished. */
+  variant?: string;
   title: string;
   /** Emoji shown in the framed portrait box, AoE2-style. */
   portrait?: string;
@@ -98,6 +101,8 @@ export class Hud {
   private minimapCtx: CanvasRenderingContext2D;
   private onMinimapClick: (x: number, z: number) => void = () => {};
   private lastInfoKeyRef: unknown = undefined;
+  private lastInfoVariant: string | undefined = undefined;
+  private statValueEls: HTMLElement[] = [];
   private hpFillEl: HTMLElement | null = null;
   private hpTextEl: HTMLElement | null = null;
   private queueStripEl: HTMLElement | null = null;
@@ -336,11 +341,12 @@ export class Hud {
       return;
     }
 
-    if (info.key !== this.lastInfoKeyRef) {
+    if (info.key !== this.lastInfoKeyRef || info.variant !== this.lastInfoVariant) {
       // Selection changed — rebuild the panel and reset the command grid
       // back to its root page (AoE2 drops you out of Build sub-pages when
       // you select something else).
       this.lastInfoKeyRef = info.key;
+      this.lastInfoVariant = info.variant;
       this.commandPath = [];
       this.renderSelectionSkeleton(info);
       this.rootCommands = info.commands ?? [];
@@ -363,6 +369,7 @@ export class Hud {
   private showDefaultSelectionInfo() {
     if (this.lastInfoKeyRef === null) return; // already blank
     this.lastInfoKeyRef = null;
+    this.lastInfoVariant = undefined;
     this.infoEl.innerHTML = "";
     this.infoEl.classList.add("empty");
     this.hpFillEl = null;
@@ -377,7 +384,7 @@ export class Hud {
     const statsRows = (info.stats ?? [])
       .map(
         ([label, value]) =>
-          `<div class="stat-row"><span>${label}</span><span>${value}</span></div>`,
+          `<div class="stat-row"><span>${label}</span><span class="stat-value">${value}</span></div>`,
       )
       .join("");
     const hasHp = info.hp !== undefined && info.maxHp !== undefined;
@@ -426,6 +433,9 @@ export class Hud {
 
     this.hpFillEl = this.infoEl.querySelector(".hp-fill");
     this.hpTextEl = this.infoEl.querySelector(".hp-text");
+    this.statValueEls = [
+      ...this.infoEl.querySelectorAll<HTMLElement>(".stat-row .stat-value"),
+    ];
     this.queueStripEl = this.infoEl.querySelector(".queue-strip");
     this.queueFillEl = this.infoEl.querySelector(".queue-fill");
     this.queueStatusEl = this.infoEl.querySelector(".queue-status");
@@ -441,6 +451,12 @@ export class Hud {
       this.hpFillEl.style.background = hpColor;
       this.hpTextEl.textContent = `${Math.ceil(info.hp)} / ${info.maxHp}`;
     }
+    // Stat values can change while the same thing stays selected (build
+    // progress, builder count), so refresh them rather than baking them in.
+    (info.stats ?? []).forEach(([, value], i) => {
+      const el = this.statValueEls[i];
+      if (el && el.textContent !== value) el.textContent = value;
+    });
     this.updateQueue(info);
   }
 

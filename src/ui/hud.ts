@@ -16,11 +16,13 @@ export class Hud {
   private craftMenuEl: HTMLElement;
   private buildMenuEl: HTMLElement;
   private placementButtonsEl: HTMLElement;
+  private selectBoxEl: HTMLElement;
   private craftMenuOpen = false;
   private buildMenuOpen = false;
   private onSelectBuilding: (building: BuildingDef) => void = () => {};
   private onConfirmPlacement: () => void = () => {};
   private onCancelPlacement: () => void = () => {};
+  private onReset: () => void = () => {};
 
   constructor(
     root: HTMLElement,
@@ -32,10 +34,11 @@ export class Hud {
       <div class="inventory"></div>
       <div class="townstats"></div>
       <div class="prompt" hidden></div>
-      <div class="hint">WASD/drag pan · scroll/pinch zoom · left-click select · right-click command (tap on mobile) · Esc deselect</div>
+      <div class="hint">WASD pan (drag pans on touch) · scroll/pinch zoom · left-click select · left-drag box-select · right-click command (tap on mobile) · Esc deselect</div>
       <div class="quick-buttons">
         <button class="qbtn" id="craftBtn" title="Crafting (C)">🛠️</button>
         <button class="qbtn" id="buildBtn" title="Build (B)">🏗️</button>
+        <button class="qbtn" id="resetBtn" title="Reset Town">🔄</button>
       </div>
       <div class="placement-buttons" hidden>
         <button class="pbtn pbtn-confirm">✓ Place</button>
@@ -43,6 +46,7 @@ export class Hud {
       </div>
       <div class="craft-menu" hidden></div>
       <div class="craft-menu" id="buildMenu" hidden></div>
+      <div class="select-box" hidden></div>
     `;
     this.inventoryEl = root.querySelector(".inventory")!;
     this.townStatsEl = root.querySelector(".townstats")!;
@@ -50,6 +54,7 @@ export class Hud {
     this.craftMenuEl = root.querySelector(".craft-menu")!;
     this.buildMenuEl = root.querySelector("#buildMenu")!;
     this.placementButtonsEl = root.querySelector(".placement-buttons")!;
+    this.selectBoxEl = root.querySelector(".select-box")!;
 
     this.inventory.onChange(() => this.renderInventory());
     this.renderInventory();
@@ -70,6 +75,18 @@ export class Hud {
     this.placementButtonsEl
       .querySelector(".pbtn-cancel")!
       .addEventListener("click", () => this.onCancelPlacement());
+    root.querySelector("#resetBtn")!.addEventListener("click", () => {
+      if (confirm("Reset your town? This clears your save and starts a new game.")) {
+        this.onReset();
+      }
+    });
+
+    document.addEventListener("pointerdown", (e) => {
+      if (!(this.craftMenuOpen || this.buildMenuOpen)) return;
+      const target = e.target as HTMLElement;
+      if (target.closest(".qbtn") || target.closest(".craft-menu")) return;
+      this.closeMenus();
+    });
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyC") {
@@ -101,12 +118,32 @@ export class Hud {
     this.onConfirmPlacement = handler;
   }
 
+  setOnReset(handler: () => void) {
+    this.onReset = handler;
+  }
+
   setOnCancelPlacement(handler: () => void) {
     this.onCancelPlacement = handler;
   }
 
   setPlacementMode(active: boolean) {
     this.placementButtonsEl.hidden = !active;
+  }
+
+  setSelectionBox(rect: { x1: number; y1: number; x2: number; y2: number } | null) {
+    if (!rect) {
+      this.selectBoxEl.hidden = true;
+      return;
+    }
+    const left = Math.min(rect.x1, rect.x2);
+    const top = Math.min(rect.y1, rect.y2);
+    const width = Math.abs(rect.x2 - rect.x1);
+    const height = Math.abs(rect.y2 - rect.y1);
+    this.selectBoxEl.hidden = false;
+    this.selectBoxEl.style.left = `${left}px`;
+    this.selectBoxEl.style.top = `${top}px`;
+    this.selectBoxEl.style.width = `${width}px`;
+    this.selectBoxEl.style.height = `${height}px`;
   }
 
   private renderInventory() {

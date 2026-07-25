@@ -22,9 +22,11 @@ export class Wolf {
     this.model.position.copy(spawnPoint);
     scene.add(this.model);
 
+    // Added directly to the scene (not as a model child) so it stays level
+    // instead of inheriting the wolf's yaw as it turns to face movement.
     this.healthBar = createHealthBar(0.7, 0.1);
-    this.healthBar.group.position.y = 0.85;
-    this.model.add(this.healthBar.group);
+    scene.add(this.healthBar.group);
+    this.syncHealthBarPosition();
   }
 
   update(
@@ -41,6 +43,7 @@ export class Wolf {
     const dist = this.model.position.distanceTo(target.position);
     if (dist > CONTACT_RANGE) {
       this.moveToward(target.position, delta);
+      this.syncHealthBarPosition();
       return;
     }
 
@@ -58,9 +61,24 @@ export class Wolf {
     if (this.hp <= 0) {
       this.alive = false;
       this.model.visible = false;
+      this.healthBar.group.visible = false;
       return true;
     }
     return false;
+  }
+
+  /** Removes both the model and its detached health bar from the scene. */
+  dispose(scene: THREE.Scene) {
+    scene.remove(this.model);
+    scene.remove(this.healthBar.group);
+  }
+
+  private syncHealthBarPosition() {
+    this.healthBar.group.position.set(
+      this.model.position.x,
+      this.model.position.y + 0.85,
+      this.model.position.z,
+    );
   }
 
   private moveToward(point: THREE.Vector3, delta: number) {

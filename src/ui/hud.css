@@ -95,6 +95,13 @@ html, body {
   background: rgba(255, 255, 255, 0.25);
 }
 
+#hud .select-box {
+  position: fixed;
+  border: 1.5px solid rgba(111, 227, 255, 0.9);
+  background: rgba(111, 227, 255, 0.12);
+  pointer-events: none;
+}
+
 #hud .placement-buttons {
   position: absolute;
   left: 50%;

@@ -21,6 +21,10 @@ export class RtsCamera {
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private onTapHandler: (screenX: number, screenY: number, button: number, isTouch: boolean) => void =
     () => {};
+  private onBoxSelectHandler: (
+    rect: { x1: number; y1: number; x2: number; y2: number } | null,
+    final: boolean,
+  ) => void = () => {};
 
   private pointers = new Map<number, { x: number; y: number }>();
   private dragLast = { x: 0, y: 0 };
@@ -29,6 +33,7 @@ export class RtsCamera {
   private gestureMoved = false;
   private tapStart = { x: 0, y: 0, t: 0, button: 0, isTouch: false };
   private primaryButton = 0;
+  private boxSelecting = false;
   private keys = new Set<string>();
 
   constructor(
@@ -112,8 +117,20 @@ export class RtsCamera {
           Math.abs(e.clientY - this.tapStart.y) > TAP_MAX_MOVE) {
         this.gestureMoved = true;
       }
-      // Right-button drags don't pan — right-click is reserved for commands.
-      if (this.primaryButton !== 2) this.pan(dx, dy);
+      if (this.primaryButton === 0 && !this.tapStart.isTouch) {
+        // Left-mouse drag box-selects instead of panning; touch has no
+        // spare gesture so single-finger drag still pans there.
+        if (this.gestureMoved) {
+          this.boxSelecting = true;
+          this.onBoxSelectHandler(
+            { x1: this.tapStart.x, y1: this.tapStart.y, x2: e.clientX, y2: e.clientY },
+            false,
+          );
+        }
+      } else if (this.primaryButton !== 2) {
+        // Right-button drags don't pan — right-click is reserved for commands.
+        this.pan(dx, dy);
+      }
       this.dragLast = { x: e.clientX, y: e.clientY };
     } else if (this.pointers.size === 2) {
       this.gestureMoved = true;
@@ -126,10 +143,18 @@ export class RtsCamera {
   private onPointerEnd(e: PointerEvent) {
     if (!this.pointers.has(e.pointerId)) return;
     this.pointers.delete(e.pointerId);
-    if (this.pointers.size === 0 && !this.gestureMoved) {
-      const dt = performance.now() - this.tapStart.t;
-      if (dt < TAP_MAX_DURATION) {
-        this.onTapHandler(this.tapStart.x, this.tapStart.y, this.tapStart.button, this.tapStart.isTouch);
+    if (this.pointers.size === 0) {
+      if (this.boxSelecting) {
+        this.onBoxSelectHandler(
+          { x1: this.tapStart.x, y1: this.tapStart.y, x2: e.clientX, y2: e.clientY },
+          true,
+        );
+        this.boxSelecting = false;
+      } else if (!this.gestureMoved) {
+        const dt = performance.now() - this.tapStart.t;
+        if (dt < TAP_MAX_DURATION) {
+          this.onTapHandler(this.tapStart.x, this.tapStart.y, this.tapStart.button, this.tapStart.isTouch);
+        }
       }
     }
   }
@@ -162,6 +187,24 @@ export class RtsCamera {
   /** button: 0 = left/touch, 2 = right-click. isTouch distinguishes touch taps from mouse clicks. */
   setOnTap(handler: (screenX: number, screenY: number, button: number, isTouch: boolean) => void) {
     this.onTapHandler = handler;
+  }
+
+  /** Fired during a left-mouse drag (rect, final=false) for live visuals, and
+   * once more on release (rect, final=true) to commit the selection. Mouse only. */
+  setOnBoxSelect(
+    handler: (rect: { x1: number; y1: number; x2: number; y2: number } | null, final: boolean) => void,
+  ) {
+    this.onBoxSelectHandler = handler;
+  }
+
+  /** Projects a world point to screen-space pixel coordinates, or null if behind the camera. */
+  worldToScreen(point: THREE.Vector3): { x: number; y: number } | null {
+    const p = point.clone().project(this.camera);
+    if (p.z > 1) return null;
+    return {
+      x: ((p.x + 1) / 2) * window.innerWidth,
+      y: ((-p.y + 1) / 2) * window.innerHeight,
+    };
   }
 
   /** Where a screen point hits the y=0 ground plane — good enough for XZ;

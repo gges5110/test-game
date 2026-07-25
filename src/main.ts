@@ -11,7 +11,7 @@ import { BuildManager, getBuildingDef, type BuildingDef } from "./systems/buildi
 import { TownBuildings, type PlacedBuilding } from "./systems/townBuildings";
 import { createLighting } from "./systems/lighting";
 import { RtsCamera } from "./systems/rtsCamera";
-import { saveGame, loadGame, type SaveData } from "./systems/save";
+import { saveGame, loadGame, clearSave, type SaveData } from "./systems/save";
 import { Hud } from "./ui/hud";
 
 const canvas = document.getElementById("view") as HTMLCanvasElement;
@@ -92,7 +92,7 @@ if (savedGame) {
     placed.onDestroyed = () => {
       scene.remove(villager.model);
       villagers = villagers.filter((v) => v !== villager);
-      if (selectedVillager === villager) selectedVillager = null;
+      selectedVillagers = selectedVillagers.filter((v) => v !== villager);
     };
   }
   inventory.restore(savedGame.inventory, savedGame.capacityBonus);
@@ -122,19 +122,19 @@ if (savedGame) {
 
 rtsCamera.focus.set(0, heightAt(0, 0), 0);
 
-let selectedVillager: Villager | null = null;
+let selectedVillagers: Villager[] = [];
 let selectedBuildingInfo: PlacedBuilding | null = null;
 
-function selectVillager(villager: Villager) {
+function selectVillagers(list: Villager[]) {
   deselectBuilding();
-  if (selectedVillager) selectedVillager.setSelected(false);
-  selectedVillager = villager;
-  villager.setSelected(true);
+  for (const v of selectedVillagers) v.setSelected(false);
+  selectedVillagers = list;
+  for (const v of selectedVillagers) v.setSelected(true);
 }
 
 function deselectVillager() {
-  if (selectedVillager) selectedVillager.setSelected(false);
-  selectedVillager = null;
+  for (const v of selectedVillagers) v.setSelected(false);
+  selectedVillagers = [];
 }
 
 function selectBuilding(building: PlacedBuilding) {
@@ -222,7 +222,7 @@ function confirmPlacement() {
     placed.onDestroyed = () => {
       scene.remove(villager.model);
       villagers = villagers.filter((v) => v !== villager);
-      if (selectedVillager === villager) selectedVillager = null;
+      selectedVillagers = selectedVillagers.filter((v) => v !== villager);
     };
   } else if (selectedBuildingType.id === "storage") {
     inventory.addCapacity(20);
@@ -247,23 +247,44 @@ function handleEscape() {
 
 hud.setOnConfirmPlacement(confirmPlacement);
 hud.setOnCancelPlacement(handleEscape);
+hud.setOnReset(() => {
+  clearSave();
+  window.location.reload();
+});
 
 function commandSelectedVillager(sx: number, sy: number) {
-  if (!selectedVillager) return;
+  if (selectedVillagers.length === 0) return;
   const nodeMeshes = resources.nodes.filter((n) => !n.depleted).map((n) => n.mesh);
   const nodeHit = rtsCamera.raycastObjects(sx, sy, nodeMeshes);
   if (nodeHit) {
     const node = resolveResourceNodeFromHit(nodeHit);
     if (node) {
-      selectedVillager.commandGather(node);
+      for (const v of selectedVillagers) v.commandGather(node);
       return;
     }
   }
   const point = rtsCamera.raycastGround(sx, sy);
-  if (point) {
-    selectedVillager.commandMoveTo(new THREE.Vector3(point.x, heightAt(point.x, point.z), point.z));
-  }
+  if (!point) return;
+  // Scatter a multi-villager group in a small ring around the target point
+  // so they don't all path onto the exact same spot.
+  const spread = selectedVillagers.length > 1 ? 0.8 : 0;
+  selectedVillagers.forEach((v, i) => {
+    const angle = (i / selectedVillagers.length) * Math.PI * 2;
+    const ox = Math.cos(angle) * spread;
+    const oz = Math.sin(angle) * spread;
+    const x = point.x + ox;
+    const z = point.z + oz;
+    v.commandMoveTo(new THREE.Vector3(x, heightAt(x, z), z));
+  });
 }
+
+// While placing a building, the ghost continuously follows the mouse
+// (hover) on desktop — touch has no hover, so it only updates on tap.
+canvas.addEventListener("pointermove", (e) => {
+  if (e.pointerType !== "mouse" || !selectedBuildingType || !ghost) return;
+  const point = rtsCamera.raycastGround(e.clientX, e.clientY);
+  if (point) ghost.position.set(point.x, heightAt(point.x, point.z), point.z);
+});
 
 // Desktop: left-click selects (villager, building, or deselects on empty
 // ground), right-click issues a command to the selected villager — the
@@ -271,8 +292,12 @@ function commandSelectedVillager(sx: number, sy: number) {
 // selects it and a following tap commands it (merged into one gesture).
 rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   if (selectedBuildingType && ghost) {
-    const point = rtsCamera.raycastGround(sx, sy);
-    if (point) ghost.position.set(point.x, heightAt(point.x, point.z), point.z);
+    if (isTouch) {
+      const point = rtsCamera.raycastGround(sx, sy);
+      if (point) ghost.position.set(point.x, heightAt(point.x, point.z), point.z);
+    } else {
+      confirmPlacement();
+    }
     return;
   }
 
@@ -285,12 +310,12 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   if (villagerHit) {
     const villager = resolveVillagerFromHit(villagerHit);
     if (villager) {
-      selectVillager(villager);
+      selectVillagers([villager]);
       return;
     }
   }
 
-  if (isTouch && selectedVillager) {
+  if (isTouch && selectedVillagers.length > 0) {
     commandSelectedVillager(sx, sy);
     return;
   }
@@ -305,6 +330,36 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   }
 
   deselectAll();
+});
+
+// Left-mouse drag box-selects every villager whose screen position falls
+// inside the rectangle (desktop only — touch has no spare gesture for it).
+rtsCamera.setOnBoxSelect((rect, final) => {
+  if (selectedBuildingType) {
+    hud.setSelectionBox(null);
+    return;
+  }
+  if (!rect) {
+    hud.setSelectionBox(null);
+    return;
+  }
+  hud.setSelectionBox(rect);
+  if (!final) return;
+
+  const x1 = Math.min(rect.x1, rect.x2);
+  const x2 = Math.max(rect.x1, rect.x2);
+  const y1 = Math.min(rect.y1, rect.y2);
+  const y2 = Math.max(rect.y1, rect.y2);
+  const hits = villagers.filter((v) => {
+    const p = rtsCamera.worldToScreen(v.model.position);
+    return p !== null && p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2;
+  });
+  hud.setSelectionBox(null);
+  if (hits.length > 0) {
+    selectVillagers(hits);
+  } else {
+    deselectAll();
+  }
 });
 
 // Farms tick out food passively over time.
@@ -453,7 +508,7 @@ function animate() {
   }
   wolves = wolves.filter((w) => {
     if (!w.alive) {
-      scene.remove(w.model);
+      w.dispose(scene);
       return false;
     }
     return true;
@@ -464,15 +519,16 @@ function animate() {
   let placementPrompt: string | null = null;
   if (selectedBuildingType && ghost) {
     placementPrompt = townBuildings.isTooCloseToAny(ghost.position, MIN_BUILDING_SPACING)
-      ? "Too close to another building — tap elsewhere"
-      : `Tap ✓ to place ${selectedBuildingType.name}`;
+      ? "Too close to another building — move elsewhere"
+      : `Click (or tap ✓) to place ${selectedBuildingType.name}`;
   }
   const buildingInfoPrompt = selectedBuildingInfo
     ? `${selectedBuildingInfo.def.name} — HP ${Math.ceil(selectedBuildingInfo.hp)}/${selectedBuildingInfo.maxHp}`
     : null;
-  const selectionPrompt = selectedVillager
-    ? "Villager selected — right-click (or tap) ground to move, resource to gather"
-    : null;
+  const selectionPrompt =
+    selectedVillagers.length > 0
+      ? `${selectedVillagers.length} villager${selectedVillagers.length > 1 ? "s" : ""} selected — right-click (or tap) ground to move, resource to gather`
+      : null;
   hud.setPrompt(placementPrompt ?? buildingInfoPrompt ?? selectionPrompt);
 
   renderer.render(scene, rtsCamera.camera);

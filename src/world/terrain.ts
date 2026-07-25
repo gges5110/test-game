@@ -41,13 +41,26 @@ export function heightAt(x: number, z: number): number {
   return h;
 }
 
+const LOWLAND = new THREE.Color(0x5a8a52); // soft lowland grass
+const MIDLAND = new THREE.Color(0x6f9a5a); // mid grass
+const HIGHLAND = new THREE.Color(0x9a9270); // dry highland
+const PEAK = new THREE.Color(0xc7c2ac); // rocky peak
+const ROCK = new THREE.Color(0x958c7c); // steep slope
+
+/** Blends smoothly between bands (rather than hard cutoffs) for a painted
+ * gradient instead of a banded, gamey look. */
 function biomeColor(height: number, slope: number): THREE.Color {
-  // Steep slopes read as rocky regardless of height.
-  if (slope > 0.6) return new THREE.Color(0x8a8378);
-  if (height < -1) return new THREE.Color(0x4a7c3f); // lowland grass
-  if (height < 5) return new THREE.Color(0x5c8f4a); // mid grass
-  if (height < 9) return new THREE.Color(0x7a7a63); // dry highland
-  return new THREE.Color(0xb9b9b9); // rocky peak
+  const color = new THREE.Color();
+  if (height < 2) {
+    color.copy(LOWLAND).lerp(MIDLAND, THREE.MathUtils.smoothstep(height, -1, 2));
+  } else if (height < 7) {
+    color.copy(MIDLAND).lerp(HIGHLAND, THREE.MathUtils.smoothstep(height, 2, 7));
+  } else {
+    color.copy(HIGHLAND).lerp(PEAK, THREE.MathUtils.smoothstep(height, 7, 10));
+  }
+  // Steep slopes read as rocky regardless of height, blended in softly.
+  color.lerp(ROCK, THREE.MathUtils.smoothstep(slope, 0.3, 0.75));
+  return color;
 }
 
 export function createTerrain(): THREE.Mesh {

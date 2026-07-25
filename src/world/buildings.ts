@@ -61,7 +61,7 @@ function createFarmMesh(): THREE.Group {
   soil.receiveShadow = true;
   group.add(soil);
 
-  const cropMat = new THREE.MeshStandardMaterial({ color: 0x8fbf4a, flatShading: true });
+  const cropMat = new THREE.MeshStandardMaterial({ color: 0x8fbf4a });
   for (let x = -0.8; x <= 0.8; x += 0.8) {
     for (let z = -0.8; z <= 0.8; z += 0.8) {
       const crop = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.35, 5), cropMat);
@@ -155,7 +155,7 @@ function createMillMesh(): THREE.Group {
   hub.position.set(0, 1.7, 0.85);
   group.add(hub);
 
-  const bladeMat = new THREE.MeshStandardMaterial({ color: 0xd9c19a, flatShading: true });
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0xd9c19a });
   for (let i = 0; i < 4; i++) {
     const blade = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.1, 0.06), bladeMat);
     blade.position.copy(hub.position);
@@ -206,7 +206,7 @@ function createMiningCampMesh(): THREE.Group {
   canopy.castShadow = true;
   group.add(canopy);
 
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a8378, flatShading: true });
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a8378 });
   const rockSpots: [number, number, number][] = [
     [0, 0.2, 0.4],
     [0.4, 0.16, 0.6],

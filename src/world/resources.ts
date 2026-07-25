@@ -57,7 +57,7 @@ function createTreeMesh(): THREE.Object3D {
 function createRockMesh(): THREE.Object3D {
   const rock = new THREE.Mesh(
     new THREE.DodecahedronGeometry(0.5, 0),
-    new THREE.MeshStandardMaterial({ color: 0x8a8378, flatShading: true }),
+    new THREE.MeshStandardMaterial({ color: 0x8a8378 }),
   );
   rock.position.y = 0.35;
   rock.castShadow = true;
@@ -66,7 +66,7 @@ function createRockMesh(): THREE.Object3D {
 
 function createBushMesh(): THREE.Object3D {
   const group = new THREE.Group();
-  const foliageMat = new THREE.MeshStandardMaterial({ color: 0x4a7c3f, flatShading: true });
+  const foliageMat = new THREE.MeshStandardMaterial({ color: 0x4a7c3f });
 
   // Several overlapping lumps read as a fuller bush than one sphere.
   const lumps: [number, number, number, number][] = [

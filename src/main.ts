@@ -11,6 +11,7 @@ import { Crafting } from "./systems/crafting";
 import { BUILDINGS, BuildManager, getBuildingDef, type BuildingDef } from "./systems/building";
 import { TownBuildings, type PlacedBuilding } from "./systems/townBuildings";
 import { createLighting } from "./systems/lighting";
+import { createComposer } from "./systems/postfx";
 import { RtsCamera } from "./systems/rtsCamera";
 import { saveGame, loadGame, clearSave, type SaveData } from "./systems/save";
 import { Hud, TRADE_GIVE, TRADE_GET, type SelectionInfo } from "./ui/hud";
@@ -26,12 +27,16 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+renderer.toneMappingExposure = 1.15;
+
+const { composer, setSize: setComposerSize } = createComposer(renderer, scene, rtsCamera.camera);
 
 window.addEventListener("resize", () => {
   rtsCamera.setAspect(window.innerWidth / window.innerHeight);
   renderer.setSize(window.innerWidth, window.innerHeight);
+  setComposerSize(window.innerWidth, window.innerHeight);
 });
 
 const clock = new THREE.Clock();
@@ -672,7 +677,7 @@ function animate() {
   hud.setPrompt(placementPrompt);
   hud.setSelectionInfo(buildSelectionInfo());
 
-  renderer.render(scene, rtsCamera.camera);
+  composer.render();
   requestAnimationFrame(animate);
 }
 

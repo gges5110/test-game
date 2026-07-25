@@ -96,7 +96,7 @@ export class Wolf {
 
 function createWolfModel(): THREE.Group {
   const group = new THREE.Group();
-  const furMat = new THREE.MeshStandardMaterial({ color: 0x4a4a4a, flatShading: true });
+  const furMat = new THREE.MeshStandardMaterial({ color: 0x4a4a4a });
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.9), furMat);
   body.position.y = 0.35;

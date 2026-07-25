@@ -48,6 +48,40 @@ html, body {
   text-align: right;
 }
 
+#hud .wave-warning {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 14px;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+#hud .wave-warning:empty {
+  display: none;
+}
+
+#hud .wave-warning.soon {
+  border-color: rgba(212, 167, 44, 0.6);
+  color: #ffdb7a;
+}
+
+#hud .wave-warning.urgent {
+  border-color: rgba(192, 57, 57, 0.8);
+  background: rgba(80, 15, 15, 0.55);
+  color: #ff8a8a;
+  animation: wave-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes wave-pulse {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  50% { transform: translateX(-50%) scale(1.06); }
+}
+
 #hud .prompt {
   position: absolute;
   bottom: 22%;

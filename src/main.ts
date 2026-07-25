@@ -829,6 +829,7 @@ function animate() {
     townBuildings.list.length,
     soldiers.length,
   );
+  hud.setWaveWarning(nextWaveAt - time, 1 + (waveNumber + 1));
 
   let placementPrompt: string | null = null;
   if (selectedBuildingType && ghost) {

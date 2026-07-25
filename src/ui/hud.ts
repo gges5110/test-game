@@ -47,6 +47,7 @@ const TRADE_PAIRS: [ResourceType, ResourceType][] = [
 export class Hud {
   private inventoryEl: HTMLElement;
   private townStatsEl: HTMLElement;
+  private waveWarningEl: HTMLElement;
   private promptEl: HTMLElement;
   private craftMenuEl: HTMLElement;
   private buildMenuEl: HTMLElement;
@@ -79,6 +80,7 @@ export class Hud {
     root.innerHTML = `
       <div class="inventory"></div>
       <div class="townstats"></div>
+      <div class="wave-warning"></div>
       <div class="prompt" hidden></div>
       <div class="hint">WASD pan (drag pans on touch) · scroll/pinch zoom · left-click select · left-drag box-select · right-click command (tap on mobile), or right-drag pan when nothing's selected · Esc deselect</div>
       <div class="quick-buttons">
@@ -99,6 +101,7 @@ export class Hud {
     `;
     this.inventoryEl = root.querySelector(".inventory")!;
     this.townStatsEl = root.querySelector(".townstats")!;
+    this.waveWarningEl = root.querySelector(".wave-warning")!;
     this.promptEl = root.querySelector(".prompt")!;
     this.craftMenuEl = root.querySelector(".craft-menu")!;
     this.buildMenuEl = root.querySelector("#buildMenu")!;
@@ -331,6 +334,18 @@ export class Hud {
   setTownStats(population: number, buildingCount: number, soldierCount: number) {
     const soldierLine = soldierCount > 0 ? `<br><small>⚔️ ${soldierCount} soldiers</small>` : "";
     this.townStatsEl.innerHTML = `👥 ${population}<br><small>🏘️ ${buildingCount} buildings</small>${soldierLine}`;
+  }
+
+  /** Shows a countdown to the next wolf wave and how many are coming, with
+   * escalating urgency (color + pulse) as it gets close. */
+  setWaveWarning(secondsLeft: number, wolfCount: number) {
+    const urgent = secondsLeft <= 10;
+    const soon = secondsLeft <= 20;
+    this.waveWarningEl.classList.toggle("urgent", urgent);
+    this.waveWarningEl.classList.toggle("soon", soon && !urgent);
+    const seconds = Math.max(0, Math.ceil(secondsLeft));
+    const wolfWord = wolfCount === 1 ? "wolf" : "wolves";
+    this.waveWarningEl.textContent = `🐺 Wave incoming: ${seconds}s — ${wolfCount} ${wolfWord}`;
   }
 
   setPrompt(text: string | null) {

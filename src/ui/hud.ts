@@ -16,6 +16,13 @@ export interface SelectionAction {
 }
 
 export interface SelectionInfo {
+  /** Identifies *what* is selected (e.g. the selected object itself), so the
+   * panel can tell "same selection, refreshed this frame" from "selection
+   * changed" — only rebuilding DOM nodes in the latter case. Rebuilding
+   * every frame would destroy button elements underneath the user's mouse
+   * every ~16ms, which defeats CSS :hover/:active (they need a persistent
+   * node) even though click still worked via delegation. */
+  key: unknown;
   title: string;
   description: string;
   hp?: number;
@@ -48,6 +55,11 @@ export class Hud {
   private selectBoxEl: HTMLElement;
   private infoEl: HTMLElement;
   private currentSelectionActions: SelectionAction[] = [];
+  private lastInfoKeyRef: unknown = undefined;
+  private lastInfoActionCount = -1;
+  private hpFillEl: HTMLElement | null = null;
+  private hpTextEl: HTMLElement | null = null;
+  private actionButtonEls: HTMLButtonElement[] = [];
   private craftMenuOpen = false;
   private buildMenuOpen = false;
   private tradeMenuOpen = false;
@@ -223,24 +235,40 @@ export class Hud {
   setSelectionInfo(info: SelectionInfo | null) {
     if (!info) {
       this.infoEl.hidden = true;
+      this.lastInfoKeyRef = undefined;
       return;
     }
     this.infoEl.hidden = false;
+    this.currentSelectionActions = info.actions ?? [];
+
+    const actionCount = this.currentSelectionActions.length;
+    if (info.key !== this.lastInfoKeyRef || actionCount !== this.lastInfoActionCount) {
+      // Selection changed (or its action count changed, e.g. Repair
+      // appearing/disappearing) — rebuild the DOM once.
+      this.lastInfoKeyRef = info.key;
+      this.lastInfoActionCount = actionCount;
+      this.renderSelectionSkeleton(info);
+    } else {
+      // Same selection refreshed this frame — update values in place so
+      // the button/HP nodes stay alive (preserves :hover/:active, and
+      // avoids needless DOM churn 60x/sec).
+      this.updateSelectionDynamic(info);
+    }
+  }
+
+  private renderSelectionSkeleton(info: SelectionInfo) {
     const statsRows = (info.stats ?? [])
       .map(([label, value]) => `<span>${label}</span><span>${value}</span>`)
       .join("");
-    let hpBlock = "";
-    if (info.hp !== undefined && info.maxHp !== undefined) {
-      const pct = Math.max(0, Math.min(1, info.hp / info.maxHp)) * 100;
-      const hpColor = pct > 50 ? "#3fae54" : pct > 25 ? "#d4a72c" : "#c0392b";
-      hpBlock = `
-        <div class="hp-row"><span>HP</span><span>${Math.ceil(info.hp)}/${info.maxHp}</span></div>
-        <div class="hp-track"><div class="hp-fill" style="width:${pct}%;background:${hpColor}"></div></div>
-      `;
-    }
-    this.currentSelectionActions = info.actions ?? [];
+    const hasHp = info.hp !== undefined && info.maxHp !== undefined;
+    const hpBlock = hasHp
+      ? `
+        <div class="hp-row"><span>HP</span><span class="hp-text"></span></div>
+        <div class="hp-track"><div class="hp-fill"></div></div>
+      `
+      : "";
     const actionButtons = this.currentSelectionActions
-      .map((a, i) => `<button class="info-action" data-i="${i}" ${a.disabled ? "disabled" : ""}>${a.label}</button>`)
+      .map((a, i) => `<button class="info-action" data-i="${i}">${a.label}</button>`)
       .join("");
 
     this.infoEl.innerHTML = `
@@ -250,6 +278,27 @@ export class Hud {
       ${statsRows ? `<div class="stats">${statsRows}</div>` : ""}
       ${actionButtons ? `<div class="info-actions">${actionButtons}</div>` : ""}
     `;
+
+    this.hpFillEl = this.infoEl.querySelector(".hp-fill");
+    this.hpTextEl = this.infoEl.querySelector(".hp-text");
+    this.actionButtonEls = [...this.infoEl.querySelectorAll<HTMLButtonElement>(".info-action")];
+    this.updateSelectionDynamic(info);
+  }
+
+  private updateSelectionDynamic(info: SelectionInfo) {
+    if (info.hp !== undefined && info.maxHp !== undefined && this.hpFillEl && this.hpTextEl) {
+      const pct = Math.max(0, Math.min(1, info.hp / info.maxHp)) * 100;
+      const hpColor = pct > 50 ? "#3fae54" : pct > 25 ? "#d4a72c" : "#c0392b";
+      this.hpFillEl.style.width = `${pct}%`;
+      this.hpFillEl.style.background = hpColor;
+      this.hpTextEl.textContent = `${Math.ceil(info.hp)}/${info.maxHp}`;
+    }
+    this.actionButtonEls.forEach((btn, i) => {
+      const action = this.currentSelectionActions[i];
+      if (!action) return;
+      if (btn.textContent !== action.label) btn.textContent = action.label;
+      if (btn.disabled !== action.disabled) btn.disabled = action.disabled;
+    });
   }
 
   setSelectionBox(rect: { x1: number; y1: number; x2: number; y2: number } | null) {

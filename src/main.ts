@@ -1,20 +1,36 @@
 import * as THREE from "three";
 import { createTerrain, heightAt } from "./world/terrain";
 import { ResourceManager } from "./world/resources";
-import { createBuildingMesh, makeGhost, attachSelectionRing, attachHealthBar } from "./world/buildings";
+import {
+  createBuildingMesh,
+  makeGhost,
+  attachSelectionRing,
+  attachHealthBar,
+} from "./world/buildings";
 import type { HealthBar } from "./world/healthBar";
 import { Villager } from "./world/villager";
 import { Soldier, getUnitStats, type UnitKind } from "./world/soldier";
 import { Wolf } from "./world/enemy";
 import { Inventory } from "./systems/inventory";
 import { Crafting } from "./systems/crafting";
-import { BUILDINGS, BuildManager, getBuildingDef, type BuildingDef } from "./systems/building";
+import {
+  BUILDINGS,
+  BuildManager,
+  getBuildingDef,
+  type BuildingDef,
+} from "./systems/building";
 import { TownBuildings, type PlacedBuilding } from "./systems/townBuildings";
 import { createLighting } from "./systems/lighting";
 import { createComposer } from "./systems/postfx";
 import { RtsCamera } from "./systems/rtsCamera";
 import { saveGame, loadGame, clearSave, type SaveData } from "./systems/save";
-import { Hud, TRADE_GIVE, TRADE_GET, type SelectionInfo, type SelectionAction } from "./ui/hud";
+import {
+  Hud,
+  TRADE_GIVE,
+  TRADE_GET,
+  type SelectionInfo,
+  type SelectionAction,
+} from "./ui/hud";
 
 const canvas = document.getElementById("view") as HTMLCanvasElement;
 const hudRoot = document.getElementById("hud") as HTMLElement;
@@ -31,7 +47,11 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.15;
 
-const { composer, setSize: setComposerSize } = createComposer(renderer, scene, rtsCamera.camera);
+const { composer, setSize: setComposerSize } = createComposer(
+  renderer,
+  scene,
+  rtsCamera.camera,
+);
 
 window.addEventListener("resize", () => {
   rtsCamera.setAspect(window.innerWidth / window.innerHeight);
@@ -57,7 +77,12 @@ function gatherBonus(type: Parameters<typeof crafting.gatherBonus>[0]) {
   return crafting.gatherBonus(type);
 }
 
-function spawnBuilding(id: string, x: number, z: number, hp?: number): PlacedBuilding {
+function spawnBuilding(
+  id: string,
+  x: number,
+  z: number,
+  hp?: number,
+): PlacedBuilding {
   const def = getBuildingDef(id);
   const mesh = createBuildingMesh(id);
   mesh.position.set(x, heightAt(x, z), z);
@@ -119,7 +144,9 @@ if (savedGame) {
   }
   for (const placed of townBuildings.list) {
     if (placed.type !== "house") continue;
-    const villager = villagers.find((v) => v.getHome().distanceTo(placed.position) < 0.01);
+    const villager = villagers.find(
+      (v) => v.getHome().distanceTo(placed.position) < 0.01,
+    );
     if (!villager) continue;
     placed.onDestroyed = () => {
       scene.remove(villager.model);
@@ -143,13 +170,19 @@ if (savedGame) {
     const x = Math.cos(angle) * 3;
     const z = Math.sin(angle) * 3;
     villagers.push(
-      new Villager(scene, new THREE.Vector3(x, heightAt(x, z), z), resources, inventory, gatherBonus),
+      new Villager(
+        scene,
+        new THREE.Vector3(x, heightAt(x, z), z),
+        resources,
+        inventory,
+        gatherBonus,
+      ),
     );
   }
 
   inventory.add("wood", 8);
   inventory.add("stone", 4);
-  inventory.add("food", 2);
+  inventory.add("food", 3);
 }
 
 rtsCamera.focus.set(0, heightAt(0, 0), 0);
@@ -182,7 +215,9 @@ function selectBuilding(building: PlacedBuilding) {
 
 function deselectBuilding() {
   if (selectedBuildingInfo) {
-    const ring = selectedBuildingInfo.mesh.userData.selectionRing as THREE.Mesh | undefined;
+    const ring = selectedBuildingInfo.mesh.userData.selectionRing as
+      | THREE.Mesh
+      | undefined;
     if (ring) ring.visible = false;
   }
   selectedBuildingInfo = null;
@@ -289,8 +324,15 @@ function buildSelectionInfo(): SelectionInfo | null {
     const actions: SelectionAction[] = [];
     if (def.trains) {
       if (building.producingUntil !== undefined) {
-        const remaining = Math.max(0, building.producingUntil - clock.getElapsedTime());
-        actions.push({ label: `Training ${unitLabel(def.trains.unit)}… ${remaining.toFixed(1)}s`, disabled: true, onClick: () => {} });
+        const remaining = Math.max(
+          0,
+          building.producingUntil - clock.getElapsedTime(),
+        );
+        actions.push({
+          label: `Training ${unitLabel(def.trains.unit)}… ${remaining.toFixed(1)}s`,
+          disabled: true,
+          onClick: () => {},
+        });
       } else {
         const affordable = inventory.has("food", def.trains.foodCost);
         actions.push({
@@ -301,9 +343,15 @@ function buildSelectionInfo(): SelectionInfo | null {
       }
     }
     if (building.hp < building.maxHp) {
-      const fullCost = Math.max(1, Math.ceil((building.maxHp - building.hp) * REPAIR_WOOD_PER_HP));
+      const fullCost = Math.max(
+        1,
+        Math.ceil((building.maxHp - building.hp) * REPAIR_WOOD_PER_HP),
+      );
       const spend = Math.min(fullCost, inventory.get("wood"));
-      const label = spend >= fullCost ? `Repair (${fullCost} wood)` : `Repair (${spend}/${fullCost} wood — partial)`;
+      const label =
+        spend >= fullCost
+          ? `Repair (${fullCost} wood)`
+          : `Repair (${spend}/${fullCost} wood — partial)`;
       actions.push({
         label,
         disabled: spend <= 0,
@@ -312,6 +360,7 @@ function buildSelectionInfo(): SelectionInfo | null {
     }
 
     return {
+      key: building,
       title: def.name,
       description: def.description,
       hp: building.hp,
@@ -324,8 +373,10 @@ function buildSelectionInfo(): SelectionInfo | null {
   if (selectedSoldier) {
     const stats = getUnitStats(selectedSoldier.kind);
     return {
+      key: selectedSoldier,
       title: stats.label,
-      description: "Trained by a Barracks/Archery Range/Stable. Patrols near home and auto-attacks any wolf within range.",
+      description:
+        "Trained by a Barracks/Archery Range/Stable. Patrols near home and auto-attacks any wolf within range.",
       hp: selectedSoldier.hp,
       maxHp: stats.maxHp,
       stats: [
@@ -339,15 +390,19 @@ function buildSelectionInfo(): SelectionInfo | null {
 
   if (selectedVillagers.length === 1) {
     return {
+      key: selectedVillagers,
       title: "Villager",
-      description: "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
+      description:
+        "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
     };
   }
 
   if (selectedVillagers.length > 1) {
     return {
+      key: selectedVillagers,
       title: `${selectedVillagers.length} Villagers`,
-      description: "Right-click ground to move as a group, or a resource for all to gather.",
+      description:
+        "Right-click ground to move as a group, or a resource for all to gather.",
     };
   }
 
@@ -365,7 +420,11 @@ hud.setOnSelectBuilding((building) => {
   if (ghost) scene.remove(ghost);
   selectedBuildingType = building;
   ghost = makeGhost(createBuildingMesh(building.id));
-  ghost.position.set(rtsCamera.focus.x, heightAt(rtsCamera.focus.x, rtsCamera.focus.z), rtsCamera.focus.z);
+  ghost.position.set(
+    rtsCamera.focus.x,
+    heightAt(rtsCamera.focus.x, rtsCamera.focus.z),
+    rtsCamera.focus.z,
+  );
   scene.add(ghost);
   hud.setPlacementMode(true);
 });
@@ -379,13 +438,24 @@ function cancelPlacement() {
 
 function confirmPlacement() {
   if (!selectedBuildingType || !ghost) return;
-  if (townBuildings.isTooCloseToAny(ghost.position, MIN_BUILDING_SPACING)) return;
+  if (townBuildings.isTooCloseToAny(ghost.position, MIN_BUILDING_SPACING))
+    return;
   if (!buildManager.build(selectedBuildingType)) return;
 
-  const placed = spawnBuilding(selectedBuildingType.id, ghost.position.x, ghost.position.z);
+  const placed = spawnBuilding(
+    selectedBuildingType.id,
+    ghost.position.x,
+    ghost.position.z,
+  );
 
   if (selectedBuildingType.id === "house") {
-    const villager = new Villager(scene, placed.position, resources, inventory, gatherBonus);
+    const villager = new Villager(
+      scene,
+      placed.position,
+      resources,
+      inventory,
+      gatherBonus,
+    );
     villagers.push(villager);
     placed.onDestroyed = () => {
       scene.remove(villager.model);
@@ -423,7 +493,9 @@ hud.setOnReset(() => {
 
 function commandSelectedVillager(sx: number, sy: number) {
   if (selectedVillagers.length === 0) return;
-  const nodeMeshes = resources.nodes.filter((n) => !n.depleted).map((n) => n.mesh);
+  const nodeMeshes = resources.nodes
+    .filter((n) => !n.depleted)
+    .map((n) => n.mesh);
   const nodeHit = rtsCamera.raycastObjects(sx, sy, nodeMeshes);
   if (nodeHit) {
     const node = resolveResourceNodeFromHit(nodeHit);
@@ -463,7 +535,8 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   if (selectedBuildingType && ghost) {
     if (isTouch) {
       const point = rtsCamera.raycastGround(sx, sy);
-      if (point) ghost.position.set(point.x, heightAt(point.x, point.z), point.z);
+      if (point)
+        ghost.position.set(point.x, heightAt(point.x, point.z), point.z);
     } else {
       confirmPlacement();
     }
@@ -475,7 +548,11 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
     return;
   }
 
-  const villagerHit = rtsCamera.raycastObjects(sx, sy, villagers.map((v) => v.model));
+  const villagerHit = rtsCamera.raycastObjects(
+    sx,
+    sy,
+    villagers.map((v) => v.model),
+  );
   if (villagerHit) {
     const villager = resolveVillagerFromHit(villagerHit);
     if (villager) {
@@ -489,7 +566,11 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
     return;
   }
 
-  const soldierHit = rtsCamera.raycastObjects(sx, sy, soldiers.map((s) => s.model));
+  const soldierHit = rtsCamera.raycastObjects(
+    sx,
+    sy,
+    soldiers.map((s) => s.model),
+  );
   if (soldierHit) {
     const soldier = resolveSoldierFromHit(soldierHit);
     if (soldier) {
@@ -498,7 +579,11 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
     }
   }
 
-  const buildingHit = rtsCamera.raycastObjects(sx, sy, townBuildings.list.map((b) => b.mesh));
+  const buildingHit = rtsCamera.raycastObjects(
+    sx,
+    sy,
+    townBuildings.list.map((b) => b.mesh),
+  );
   if (buildingHit) {
     const building = resolveBuildingFromHit(buildingHit);
     if (building) {
@@ -555,7 +640,10 @@ function spawnAttackBeam(from: THREE.Vector3, to: THREE.Vector3, now: number) {
   });
   const beam = new THREE.Mesh(geometry, material);
   beam.position.copy(from).add(to).multiplyScalar(0.5);
-  beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  beam.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0),
+    dir.normalize(),
+  );
   scene.add(beam);
   attackEffects.push({ mesh: beam, expiresAt: now + BEAM_DURATION });
 }
@@ -632,7 +720,8 @@ window.addEventListener("beforeunload", () => {
   if (!resetting) saveGame(collectSaveData());
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden" && !resetting) saveGame(collectSaveData());
+  if (document.visibilityState === "hidden" && !resetting)
+    saveGame(collectSaveData());
 });
 
 function animate() {
@@ -664,11 +753,20 @@ function animate() {
   }
 
   for (const building of townBuildings.list) {
-    if (building.producingUntil !== undefined && time >= building.producingUntil) {
+    if (
+      building.producingUntil !== undefined &&
+      time >= building.producingUntil
+    ) {
       building.producingUntil = undefined;
       const unit = building.def.trains!.unit;
       if (unit === "villager") {
-        const villager = new Villager(scene, building.position, resources, inventory, gatherBonus);
+        const villager = new Villager(
+          scene,
+          building.position,
+          resources,
+          inventory,
+          gatherBonus,
+        );
         villagers.push(villager);
       } else {
         soldiers.push(new Soldier(scene, building.position, unit));
@@ -683,13 +781,16 @@ function animate() {
     if (building.def.attack && time >= building.attackReadyAt) {
       const { range, damage, cooldown } = building.def.attack;
       const target = wolves.find(
-        (w) => w.alive && w.model.position.distanceTo(building.position) <= range,
+        (w) =>
+          w.alive && w.model.position.distanceTo(building.position) <= range,
       );
       if (target) {
         target.takeDamage(damage);
         building.attackReadyAt = time + cooldown;
         spawnAttackBeam(
-          building.position.clone().add(new THREE.Vector3(0, building.def.attackOriginY ?? 2, 0)),
+          building.position
+            .clone()
+            .add(new THREE.Vector3(0, building.def.attackOriginY ?? 2, 0)),
           target.model.position.clone().add(new THREE.Vector3(0, 0.3, 0)),
           time,
         );
@@ -703,7 +804,8 @@ function animate() {
       scene.remove(effect.mesh);
       return false;
     }
-    (effect.mesh.material as THREE.MeshBasicMaterial).opacity = Math.min(1, remaining / 0.15) * 0.9;
+    (effect.mesh.material as THREE.MeshBasicMaterial).opacity =
+      Math.min(1, remaining / 0.15) * 0.9;
     return true;
   });
 
@@ -722,11 +824,18 @@ function animate() {
     return true;
   });
 
-  hud.setTownStats(villagers.length, townBuildings.list.length, soldiers.length);
+  hud.setTownStats(
+    villagers.length,
+    townBuildings.list.length,
+    soldiers.length,
+  );
 
   let placementPrompt: string | null = null;
   if (selectedBuildingType && ghost) {
-    placementPrompt = townBuildings.isTooCloseToAny(ghost.position, MIN_BUILDING_SPACING)
+    placementPrompt = townBuildings.isTooCloseToAny(
+      ghost.position,
+      MIN_BUILDING_SPACING,
+    )
       ? "Too close to another building — move elsewhere"
       : `Click (or tap ✓) to place ${selectedBuildingType.name}`;
   }

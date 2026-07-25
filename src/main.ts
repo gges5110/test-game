@@ -497,54 +497,71 @@ function buildSelectionInfo(): SelectionInfo | null {
 
   const villagerCount = selectedVillagers.length;
   const soldierCount = selectedSoldiers.length;
-  if (villagerCount === 0 && soldierCount === 0) return null;
+  const total = villagerCount + soldierCount;
+  if (total === 0) return null;
 
-  // Mixed selection: summarise both, and only offer Build (a villager-only
-  // command) when villagers are actually part of it.
-  if (villagerCount > 0 && soldierCount > 0) {
+  // Which distinct unit kinds are in the selection, and how many of each.
+  const kinds: (UnitKind | "villager")[] = [
+    ...selectedVillagers.map(() => "villager" as const),
+    ...selectedSoldiers.map((s) => s.kind),
+  ];
+  const counts = new Map<UnitKind | "villager", number>();
+  for (const k of kinds) counts.set(k, (counts.get(k) ?? 0) + 1);
+  const distinctKinds = [...counts.keys()];
+  const hasVillagers = villagerCount > 0;
+
+  // Per-unit attributes only describe the selection when every unit shares a
+  // kind. For a heterogeneous group they'd be one unit's numbers presented as
+  // the group's, so show the composition instead.
+  if (distinctKinds.length > 1) {
     return {
       key: selectedSelectionKey(),
-      title: `${villagerCount + soldierCount} Units`,
+      title: `${total} Units`,
+      portrait: "👥",
+      description: hasVillagers
+        ? "Right-click to move; resources send villagers to gather, wolves send soldiers to attack."
+        : "Right-click ground to reposition the group, or a wolf to attack it.",
+      stats: distinctKinds.map(
+        (k) => [`${unitIcon(k)} ${unitLabel(k)}`, `${counts.get(k)}`] as [string, string],
+      ),
+      commands: hasVillagers ? villagerCommands() : [],
+    };
+  }
+
+  // Single kind: stats genuinely apply to every unit in the group. Current HP
+  // still only makes sense for exactly one unit.
+  const kind = distinctKinds[0];
+  const many = total > 1;
+  if (kind === "villager") {
+    return {
+      key: selectedSelectionKey(),
+      title: many ? `${total} Villagers` : "Villager",
       portrait: "🧑‍🌾",
-      description: `${villagerCount} villager${villagerCount > 1 ? "s" : ""} and ${soldierCount} soldier${soldierCount > 1 ? "s" : ""}. Right-click to move; resources send villagers to gather, wolves send soldiers to attack.`,
+      description: many
+        ? "Right-click ground to move as a group, or a resource for all to gather."
+        : "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
       commands: villagerCommands(),
     };
   }
 
-  if (soldierCount > 0) {
-    // Stats describe one unit kind; with a mixed-kind group, show the first.
-    const lead = selectedSoldiers[0];
-    const stats = getUnitStats(lead.kind);
-    const many = soldierCount > 1;
-    const sameKind = selectedSoldiers.every((s) => s.kind === lead.kind);
-    return {
-      key: selectedSelectionKey(),
-      title: many ? `${soldierCount} ${sameKind ? stats.label + "s" : "Soldiers"}` : stats.label,
-      portrait: unitIcon(lead.kind),
-      description: many
-        ? "Right-click ground to reposition the group, or a wolf to attack it."
-        : "Right-click ground to reposition it, or a wolf to attack. Holds and defends wherever you send it.",
-      hp: many ? undefined : lead.hp,
-      maxHp: many ? undefined : stats.maxHp,
-      stats: [
-        ["⚔️ Damage", `${stats.attackDamage}`],
-        ["➹ Range", `${stats.attackRange}`],
-        ["⏱ Cooldown", `${stats.attackCooldown}s`],
-        ["⛓ Leash", `${stats.leashRange}`],
-      ],
-      commands: [],
-    };
-  }
-
-  const many = villagerCount > 1;
+  const stats = getUnitStats(kind);
+  const lead = selectedSoldiers[0];
   return {
     key: selectedSelectionKey(),
-    title: many ? `${villagerCount} Villagers` : "Villager",
-    portrait: "🧑‍🌾",
+    title: many ? `${total} ${stats.label}s` : stats.label,
+    portrait: unitIcon(kind),
     description: many
-      ? "Right-click ground to move as a group, or a resource for all to gather."
-      : "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
-    commands: villagerCommands(),
+      ? "Right-click ground to reposition the group, or a wolf to attack it."
+      : "Right-click ground to reposition it, or a wolf to attack. Holds and defends wherever you send it.",
+    hp: many ? undefined : lead.hp,
+    maxHp: many ? undefined : stats.maxHp,
+    stats: [
+      ["⚔️ Damage", `${stats.attackDamage}`],
+      ["➹ Range", `${stats.attackRange}`],
+      ["⏱ Cooldown", `${stats.attackCooldown}s`],
+      ["⛓ Leash", `${stats.leashRange}`],
+    ],
+    commands: [],
   };
 }
 

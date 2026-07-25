@@ -16,6 +16,13 @@ export interface SavedVillager {
   homeZ: number;
 }
 
+export interface SavedSoldier {
+  x: number;
+  z: number;
+  homeX: number;
+  homeZ: number;
+}
+
 export interface SaveData {
   version: 1;
   inventory: Partial<Record<ResourceType, number>>;
@@ -24,6 +31,7 @@ export interface SaveData {
   crafted: Record<string, number>;
   buildings: SavedBuilding[];
   villagers: SavedVillager[];
+  soldiers: SavedSoldier[];
   waveNumber: number;
 }
 

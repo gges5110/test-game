@@ -13,6 +13,10 @@ export interface BuildingDef {
   maxBuilt?: number;
   /** Excluded from the build menu (e.g. the free starting Town Center). */
   hidden?: boolean;
+  /** If set, this building auto-attacks the nearest wolf in range. */
+  attack?: { range: number; damage: number; cooldown: number };
+  /** Height (above the building's base) the attack beam is drawn from. Defaults to 2. */
+  attackOriginY?: number;
 }
 
 export const BUILDINGS: BuildingDef[] = [
@@ -64,6 +68,36 @@ export const BUILDINGS: BuildingDef[] = [
     cost: { wood: 4, stone: 6 },
     description: "Auto-attacks nearby wolves",
     maxHp: 120,
+    requiresTownCenter: true,
+    attack: { range: 8, damage: 12, cooldown: 1 },
+    attackOriginY: 2.9,
+  },
+  {
+    id: "ballista",
+    name: "Ballista Tower",
+    cost: { wood: 8, stone: 10 },
+    description: "Long range, heavy damage, slow to fire",
+    maxHp: 150,
+    requiresTownCenter: true,
+    attack: { range: 14, damage: 32, cooldown: 2.4 },
+    attackOriginY: 1.9,
+  },
+  {
+    id: "spike_trap",
+    name: "Spike Trap",
+    cost: { wood: 2, stone: 3 },
+    description: "Cheap, close-range, hits hard — but fragile",
+    maxHp: 20,
+    requiresTownCenter: true,
+    attack: { range: 1.8, damage: 20, cooldown: 0.7 },
+    attackOriginY: 0.3,
+  },
+  {
+    id: "barracks",
+    name: "Barracks",
+    cost: { wood: 6, stone: 4 },
+    description: "Trains a soldier every so often, paid for in food",
+    maxHp: 110,
     requiresTownCenter: true,
   },
   {

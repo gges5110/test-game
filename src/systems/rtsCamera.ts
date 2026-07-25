@@ -34,6 +34,7 @@ export class RtsCamera {
   private tapStart = { x: 0, y: 0, t: 0, button: 0, isTouch: false };
   private primaryButton = 0;
   private boxSelecting = false;
+  private rightDragPanEnabled = true;
   private keys = new Set<string>();
 
   constructor(
@@ -127,8 +128,11 @@ export class RtsCamera {
             false,
           );
         }
-      } else if (this.primaryButton !== 2) {
-        // Right-button drags don't pan — right-click is reserved for commands.
+      } else if (this.primaryButton === 2) {
+        // Right-click is reserved for commanding a selection; only pan with
+        // it when nothing is selected (so there's no command to issue).
+        if (this.rightDragPanEnabled) this.pan(dx, dy);
+      } else {
         this.pan(dx, dy);
       }
       this.dragLast = { x: e.clientX, y: e.clientY };
@@ -187,6 +191,12 @@ export class RtsCamera {
   /** button: 0 = left/touch, 2 = right-click. isTouch distinguishes touch taps from mouse clicks. */
   setOnTap(handler: (screenX: number, screenY: number, button: number, isTouch: boolean) => void) {
     this.onTapHandler = handler;
+  }
+
+  /** Whether right-click-drag pans the camera. Disable while a selection
+   * exists so right-drag doesn't fight with issuing a command. */
+  setRightDragPanEnabled(enabled: boolean) {
+    this.rightDragPanEnabled = enabled;
   }
 
   /** Fired during a left-mouse drag (rect, final=false) for live visuals, and

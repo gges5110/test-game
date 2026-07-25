@@ -34,7 +34,7 @@ export class Hud {
       <div class="inventory"></div>
       <div class="townstats"></div>
       <div class="prompt" hidden></div>
-      <div class="hint">WASD pan (drag pans on touch) · scroll/pinch zoom · left-click select · left-drag box-select · right-click command (tap on mobile) · Esc deselect</div>
+      <div class="hint">WASD pan (drag pans on touch) · scroll/pinch zoom · left-click select · left-drag box-select · right-click command (tap on mobile), or right-drag pan when nothing's selected · Esc deselect</div>
       <div class="quick-buttons">
         <button class="qbtn" id="craftBtn" title="Crafting (C)">🛠️</button>
         <button class="qbtn" id="buildBtn" title="Build (B)">🏗️</button>
@@ -157,8 +157,9 @@ export class Hud {
       .join("");
   }
 
-  setTownStats(population: number, buildingCount: number) {
-    this.townStatsEl.innerHTML = `👥 ${population}<br><small>🏘️ ${buildingCount} buildings</small>`;
+  setTownStats(population: number, buildingCount: number, soldierCount: number) {
+    const soldierLine = soldierCount > 0 ? `<br><small>⚔️ ${soldierCount} soldiers</small>` : "";
+    this.townStatsEl.innerHTML = `👥 ${population}<br><small>🏘️ ${buildingCount} buildings</small>${soldierLine}`;
   }
 
   setPrompt(text: string | null) {

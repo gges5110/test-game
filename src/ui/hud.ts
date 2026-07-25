@@ -30,6 +30,11 @@ const BUILDING_ICON: Record<string, string> = {
   castle: "🏰",
 };
 
+const RECIPE_ICON: Record<string, string> = {
+  basic_tool: "🔧",
+  iron_tool: "⚒️",
+};
+
 export interface SelectionAction {
   label: string;
   disabled: boolean;
@@ -58,8 +63,8 @@ export class Hud {
   private settingsMenuEl: HTMLElement;
   private waveWarningEl: HTMLElement;
   private promptEl: HTMLElement;
-  private craftMenuEl: HTMLElement;
-  private buildMenuEl: HTMLElement;
+  private commandsDefaultEl: HTMLElement;
+  private commandsPanelEl: HTMLElement;
   private placementButtonsEl: HTMLElement;
   private selectBoxEl: HTMLElement;
   private infoEl: HTMLElement;
@@ -72,8 +77,8 @@ export class Hud {
   private hpFillEl: HTMLElement | null = null;
   private hpTextEl: HTMLElement | null = null;
   private actionButtonEls: HTMLButtonElement[] = [];
-  private craftMenuOpen = false;
-  private buildMenuOpen = false;
+  /** Which content the shared command panel is currently showing. */
+  private commandsMode: "default" | "craft" | "build" = "default";
   private settingsMenuOpen = false;
   private onSelectBuilding: (building: BuildingDef) => void = () => {};
   private onConfirmPlacement: () => void = () => {};
@@ -100,40 +105,64 @@ export class Hud {
       <div class="select-box" hidden></div>
 
       <div class="aoe-bar">
-        <div class="building-info" hidden></div>
-
-        <div class="aoe-minimap-wrap">
-          <canvas class="minimap-canvas" width="150" height="150"></canvas>
-          <div class="hint">WASD pan · scroll zoom · left-click select · left-drag box-select · right-click command · Esc deselect</div>
-        </div>
+        <div class="building-info"></div>
 
         <div class="aoe-commands">
-          <div class="quick-buttons">
-            <button class="qbtn" id="craftBtn" title="Crafting (C)">🛠️</button>
-            <button class="qbtn" id="buildBtn" title="Build (B)">🏗️</button>
+          <div class="commands-default">
+            <button class="qbtn" id="craftBtn" title="Crafting (C)">🛠️<span>Craft</span></button>
+            <button class="qbtn" id="buildBtn" title="Build (B)">🏗️<span>Build</span></button>
           </div>
+          <div class="commands-panel" hidden></div>
           <div class="placement-buttons" hidden>
             <button class="pbtn pbtn-confirm">✓ Place</button>
             <button class="pbtn pbtn-cancel">✕ Cancel</button>
           </div>
         </div>
-      </div>
 
-      <div class="craft-menu" hidden></div>
-      <div class="craft-menu" id="buildMenu" hidden></div>
+        <div class="aoe-minimap-wrap">
+          <canvas class="minimap-canvas" width="150" height="150"></canvas>
+          <div class="hint">WASD pan · scroll zoom · left-click select · left-drag box-select · right-click command · Esc deselect</div>
+        </div>
+      </div>
     `;
     this.inventoryEl = root.querySelector(".inventory")!;
     this.townStatsEl = root.querySelector(".townstats")!;
     this.settingsMenuEl = root.querySelector(".settings-menu")!;
     this.waveWarningEl = root.querySelector(".wave-warning")!;
     this.promptEl = root.querySelector(".prompt")!;
-    this.craftMenuEl = root.querySelector(".craft-menu")!;
-    this.buildMenuEl = root.querySelector("#buildMenu")!;
+    this.commandsDefaultEl = root.querySelector(".commands-default")!;
+    this.commandsPanelEl = root.querySelector(".commands-panel")!;
     this.placementButtonsEl = root.querySelector(".placement-buttons")!;
     this.selectBoxEl = root.querySelector(".select-box")!;
     this.infoEl = root.querySelector(".building-info")!;
     this.minimapCanvas = root.querySelector(".minimap-canvas")!;
     this.minimapCtx = this.minimapCanvas.getContext("2d")!;
+    this.showDefaultSelectionInfo();
+
+    // Delegated on the panel itself (persists across re-renders) rather
+    // than rebound per-button, since it can be redrawn every frame.
+    this.commandsPanelEl.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest(".menu-close")) {
+        this.showCommandsDefault();
+        return;
+      }
+      const cmdBtn = target.closest<HTMLButtonElement>(".cmd-btn");
+      if (!cmdBtn) return;
+      if (this.commandsMode === "build") {
+        const building = BUILDINGS.find((b) => b.id === cmdBtn.dataset.id);
+        if (building) {
+          this.onSelectBuilding(building);
+          this.showCommandsDefault();
+        }
+      } else if (this.commandsMode === "craft") {
+        const recipe = RECIPES.find((r) => r.id === cmdBtn.dataset.id);
+        if (recipe) {
+          this.crafting.craft(recipe);
+          this.renderCraftPanel();
+        }
+      }
+    });
 
     this.minimapCanvas.addEventListener("click", (e) => {
       const rect = this.minimapCanvas.getBoundingClientRect();
@@ -160,25 +189,22 @@ export class Hud {
 
     this.inventory.onChange(() => {
       this.renderInventory();
-      // Re-render open menus so Craft/Place buttons reflect newly available resources.
-      if (this.craftMenuOpen) this.renderCraftMenu();
-      if (this.buildMenuOpen) this.renderBuildMenu();
+      // Re-render the open command panel so Craft/Place buttons reflect
+      // newly available resources.
+      if (this.commandsMode === "craft") this.renderCraftPanel();
+      if (this.commandsMode === "build") this.renderBuildPanel();
     });
     this.renderInventory();
 
     root.querySelector("#craftBtn")!.addEventListener("click", () => {
-      this.buildMenuOpen = false;
-      this.buildMenuEl.hidden = true;
       this.settingsMenuOpen = false;
       this.settingsMenuEl.hidden = true;
-      this.toggleCraftMenu();
+      this.toggleCommandsMode("craft");
     });
     root.querySelector("#buildBtn")!.addEventListener("click", () => {
-      this.craftMenuOpen = false;
-      this.craftMenuEl.hidden = true;
       this.settingsMenuOpen = false;
       this.settingsMenuEl.hidden = true;
-      this.toggleBuildMenu();
+      this.toggleCommandsMode("build");
     });
     this.placementButtonsEl
       .querySelector(".pbtn-confirm")!
@@ -195,26 +221,26 @@ export class Hud {
     this.settingsMenuEl.querySelector(".menu-close")!.addEventListener("click", () => this.toggleSettingsMenu());
 
     document.addEventListener("pointerdown", (e) => {
-      if (!(this.craftMenuOpen || this.buildMenuOpen || this.settingsMenuOpen)) return;
+      if (!this.settingsMenuOpen) return;
       const target = e.target as HTMLElement;
-      if (target.closest(".qbtn") || target.closest(".craft-menu") || target.closest(".settings-btn") || target.closest(".settings-menu")) return;
-      this.closeMenus();
+      if (target.closest(".settings-btn") || target.closest(".settings-menu")) return;
+      this.settingsMenuOpen = false;
+      this.settingsMenuEl.hidden = true;
     });
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyC") {
-        this.buildMenuOpen = false;
-        this.buildMenuEl.hidden = true;
-        this.toggleCraftMenu();
+        this.toggleCommandsMode("craft");
       } else if (e.code === "KeyB") {
-        this.craftMenuOpen = false;
-        this.craftMenuEl.hidden = true;
-        this.toggleBuildMenu();
+        this.toggleCommandsMode("build");
       } else if (e.code === "Enter") {
         this.onConfirmPlacement();
       } else if (e.code === "Escape") {
-        if (this.craftMenuOpen || this.buildMenuOpen || this.settingsMenuOpen) {
-          this.closeMenus();
+        if (this.commandsMode !== "default") {
+          this.showCommandsDefault();
+        } else if (this.settingsMenuOpen) {
+          this.settingsMenuOpen = false;
+          this.settingsMenuEl.hidden = true;
         } else {
           this.onCancelPlacement();
         }
@@ -241,6 +267,15 @@ export class Hud {
 
   setPlacementMode(active: boolean) {
     this.placementButtonsEl.hidden = !active;
+    // Placement replaces the commands zone's content entirely, instead of
+    // stacking Confirm/Cancel underneath the quick-buttons/grid.
+    if (active) {
+      this.commandsDefaultEl.hidden = true;
+      this.commandsPanelEl.hidden = true;
+    } else {
+      this.commandsDefaultEl.hidden = this.commandsMode !== "default";
+      this.commandsPanelEl.hidden = this.commandsMode === "default";
+    }
   }
 
   setOnCloseInfo(handler: () => void) {
@@ -284,11 +319,9 @@ export class Hud {
 
   setSelectionInfo(info: SelectionInfo | null) {
     if (!info) {
-      this.infoEl.hidden = true;
-      this.lastInfoKeyRef = undefined;
+      this.showDefaultSelectionInfo();
       return;
     }
-    this.infoEl.hidden = false;
     this.currentSelectionActions = info.actions ?? [];
 
     const actionCount = this.currentSelectionActions.length;
@@ -304,6 +337,22 @@ export class Hud {
       // avoids needless DOM churn 60x/sec).
       this.updateSelectionDynamic(info);
     }
+  }
+
+  /** Shown when nothing is selected — keeps the panel occupying its usual
+   * space (instead of collapsing to nothing) so the minimap/commands next
+   * to it don't shift position every time selection changes. */
+  private showDefaultSelectionInfo() {
+    if (this.lastInfoKeyRef === null) return; // already showing it
+    this.lastInfoKeyRef = null;
+    this.lastInfoActionCount = -1;
+    this.infoEl.innerHTML = `
+      <h2>🏰 Town Overview</h2>
+      <div class="desc">Select a villager, soldier, or building to see details and actions here.</div>
+    `;
+    this.hpFillEl = null;
+    this.hpTextEl = null;
+    this.actionButtonEls = [];
   }
 
   private renderSelectionSkeleton(info: SelectionInfo) {
@@ -404,113 +453,86 @@ export class Hud {
     }
   }
 
-  toggleCraftMenu() {
-    this.craftMenuOpen = !this.craftMenuOpen;
-    this.craftMenuEl.hidden = !this.craftMenuOpen;
-    if (this.craftMenuOpen) this.renderCraftMenu();
-  }
-
-  toggleBuildMenu() {
-    this.buildMenuOpen = !this.buildMenuOpen;
-    this.buildMenuEl.hidden = !this.buildMenuOpen;
-    if (this.buildMenuOpen) this.renderBuildMenu();
-  }
-
   toggleSettingsMenu() {
-    this.craftMenuOpen = false;
-    this.craftMenuEl.hidden = true;
-    this.buildMenuOpen = false;
-    this.buildMenuEl.hidden = true;
     this.settingsMenuOpen = !this.settingsMenuOpen;
     this.settingsMenuEl.hidden = !this.settingsMenuOpen;
   }
 
-  closeMenus() {
-    this.craftMenuOpen = false;
-    this.craftMenuEl.hidden = true;
-    this.buildMenuOpen = false;
-    this.buildMenuEl.hidden = true;
-    this.settingsMenuOpen = false;
-    this.settingsMenuEl.hidden = true;
+  /** Switches the shared command panel between the default quick-buttons
+   * and an inline Craft or Build grid — clicking the same mode again (or
+   * ✕/Esc) returns to default. Nothing here is a floating popup, so
+   * nothing shifts the info panel or minimap next to it. */
+  toggleCommandsMode(mode: "craft" | "build") {
+    if (this.commandsMode === mode) {
+      this.showCommandsDefault();
+      return;
+    }
+    this.commandsMode = mode;
+    this.commandsDefaultEl.hidden = true;
+    this.commandsPanelEl.hidden = false;
+    if (mode === "craft") this.renderCraftPanel();
+    else this.renderBuildPanel();
   }
 
-  private renderCraftMenu() {
-    const rows = RECIPES.map((recipe) => {
-      const costText = Object.entries(recipe.cost)
-        .map(([type, amt]) => `${amt} ${RESOURCE_LABEL[type as ResourceType]}`)
-        .join(", ");
+  showCommandsDefault() {
+    this.commandsMode = "default";
+    this.commandsDefaultEl.hidden = false;
+    this.commandsPanelEl.hidden = true;
+  }
+
+  private renderCraftPanel() {
+    const items = RECIPES.map((recipe) => {
       const owned = this.crafting.countOf(recipe.id);
       const maxedOut = recipe.maxOwned !== undefined && owned >= recipe.maxOwned;
       const canCraft = this.crafting.canCraft(recipe);
-      const buttonLabel = maxedOut ? "Owned" : `Craft (${owned})`;
+      const costText = Object.entries(recipe.cost)
+        .map(([type, amt]) => `${amt}${RESOURCE_ICON[type as ResourceType]}`)
+        .join(" ");
+      const costLine = maxedOut ? "Owned" : costText;
       return `
-        <div class="recipe">
-          <span>${recipe.name}<br><small>${recipe.description}</small><br><small>${costText}</small></span>
-          <button data-id="${recipe.id}" ${canCraft ? "" : "disabled"}>${buttonLabel}</button>
-        </div>
+        <button class="cmd-btn" data-id="${recipe.id}" ${canCraft ? "" : "disabled"} title="${recipe.name} — ${recipe.description}">
+          <span class="cmd-icon">${RECIPE_ICON[recipe.id] ?? "🛠️"}</span>
+          <span class="cmd-name">${recipe.name}</span>
+          <span class="cmd-cost${!maxedOut && !canCraft ? " insufficient" : ""}">${costLine}</span>
+        </button>
       `;
     }).join("");
 
-    this.craftMenuEl.innerHTML = `<h2>Crafting <button class="menu-close">✕</button></h2>${rows}`;
-    this.craftMenuEl.querySelector(".menu-close")!.addEventListener("click", () => this.toggleCraftMenu());
-    this.craftMenuEl.querySelectorAll<HTMLButtonElement>(".recipe button").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const recipe = RECIPES.find((r) => r.id === btn.dataset.id);
-        if (recipe) {
-          this.crafting.craft(recipe);
-          this.renderCraftMenu();
-        }
-      });
-    });
+    this.commandsPanelEl.innerHTML = `
+      <div class="cmd-panel-header"><span>🛠️ Crafting</span><button class="menu-close">✕</button></div>
+      <div class="cmd-grid">${items}</div>
+    `;
   }
 
-  private renderBuildMenu() {
-    const rows = BUILDINGS.filter((b) => !b.hidden)
+  private renderBuildPanel() {
+    const items = BUILDINGS.filter((b) => !b.hidden)
       .map((building) => {
-        const costPills = Object.entries(building.cost)
-          .map(([type, amt]) => {
-            const insufficient = !this.inventory.has(type as ResourceType, amt ?? 0);
-            return `<span class="cost-pill${insufficient ? " insufficient" : ""}">${amt} ${RESOURCE_ICON[type as ResourceType]}</span>`;
-          })
-          .join("");
+        const costText = Object.entries(building.cost)
+          .map(([type, amt]) => `${amt}${RESOURCE_ICON[type as ResourceType]}`)
+          .join(" ");
         const owned = this.buildManager.countBuilt(building.id);
         const maxedOut = building.maxBuilt !== undefined && owned >= building.maxBuilt;
         const townCenterMissing =
           building.requiresTownCenter && this.buildManager.countBuilt("town_center") === 0;
         const canBuild = this.buildManager.canBuild(building);
 
-        let badge = "";
-        if (maxedOut) badge = `<span class="build-badge">Built</span>`;
-        else if (townCenterMissing) badge = `<span class="build-badge">Need Town Center</span>`;
+        let costLine = costText;
+        if (maxedOut) costLine = "Built";
+        else if (townCenterMissing) costLine = "Need TC";
 
         return `
-          <button class="build-row" data-id="${building.id}" ${canBuild ? "" : "disabled"}>
-            <span class="build-icon">${BUILDING_ICON[building.id] ?? "🏗️"}</span>
-            <span class="build-main">
-              <span class="build-title-row">
-                <span class="build-name">${building.name}</span>
-                ${badge}
-              </span>
-              <span class="build-desc">${building.description}</span>
-              <span class="cost-pills">${costPills}</span>
-            </span>
+          <button class="cmd-btn" data-id="${building.id}" ${canBuild ? "" : "disabled"} title="${building.name} — ${building.description}">
+            <span class="cmd-icon">${BUILDING_ICON[building.id] ?? "🏗️"}</span>
+            <span class="cmd-name">${building.name}</span>
+            <span class="cmd-cost${!maxedOut && !townCenterMissing && !canBuild ? " insufficient" : ""}">${costLine}</span>
           </button>
         `;
       })
       .join("");
 
-    this.buildMenuEl.innerHTML = `<h2>Build <button class="menu-close">✕</button></h2>${rows}`;
-    this.buildMenuEl.querySelector(".menu-close")!.addEventListener("click", () => this.toggleBuildMenu());
-    this.buildMenuEl.querySelectorAll<HTMLButtonElement>(".build-row").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const building = BUILDINGS.find((b) => b.id === btn.dataset.id);
-        if (building) {
-          this.onSelectBuilding(building);
-          this.buildMenuOpen = false;
-          this.buildMenuEl.hidden = true;
-        }
-      });
-    });
+    this.commandsPanelEl.innerHTML = `
+      <div class="cmd-panel-header"><span>🏗️ Build</span><button class="menu-close">✕</button></div>
+      <div class="cmd-grid">${items}</div>
+    `;
   }
-
 }

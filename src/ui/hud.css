@@ -470,6 +470,38 @@ html, body {
   line-height: 1.5;
 }
 
+#hud .unit-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  max-height: 74px;
+  overflow-y: auto;
+}
+
+#hud .unit-chip {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  padding: 0;
+  border: 1px solid rgba(201, 162, 39, 0.6);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: border-color 0.12s ease, transform 0.08s ease;
+}
+
+#hud .unit-chip:hover {
+  border-color: var(--bronze-bright);
+  background: rgba(255, 215, 106, 0.15);
+}
+
+#hud .unit-chip:active {
+  transform: scale(0.9);
+}
+
 #hud .queue-block {
   margin-top: 7px;
 }

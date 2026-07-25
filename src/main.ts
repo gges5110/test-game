@@ -510,36 +510,44 @@ function buildSelectionInfo(): SelectionInfo | null {
   const distinctKinds = [...counts.keys()];
   const hasVillagers = villagerCount > 0;
 
-  // Per-unit attributes only describe the selection when every unit shares a
-  // kind. For a heterogeneous group they'd be one unit's numbers presented as
-  // the group's, so show the composition instead.
-  if (distinctKinds.length > 1) {
+  // Multiple units: show one icon per selected unit rather than a portrait
+  // and per-unit attributes, which would only describe one of them. Clicking
+  // an icon narrows the selection down to that unit.
+  if (total > 1) {
+    const sameKind = distinctKinds.length === 1;
+    const label = sameKind
+      ? `${total} ${distinctKinds[0] === "villager" ? "Villagers" : getUnitStats(distinctKinds[0] as UnitKind).label + "s"}`
+      : `${total} Units`;
     return {
       key: selectedSelectionKey(),
-      title: `${total} Units`,
-      portrait: "👥",
+      title: label,
       description: hasVillagers
         ? "Right-click to move; resources send villagers to gather, wolves send soldiers to attack."
         : "Right-click ground to reposition the group, or a wolf to attack it.",
-      stats: distinctKinds.map(
-        (k) => [`${unitIcon(k)} ${unitLabel(k)}`, `${counts.get(k)}`] as [string, string],
-      ),
+      unitGrid: kinds.map((k) => ({
+        icon: unitIcon(k),
+        tooltip: `${unitLabel(k)} — click to select only this one`,
+      })),
+      onPickUnit: (i: number) => {
+        if (i < selectedVillagers.length) {
+          selectUnits([selectedVillagers[i]], []);
+        } else {
+          selectUnits([], [selectedSoldiers[i - selectedVillagers.length]]);
+        }
+      },
       commands: hasVillagers ? villagerCommands() : [],
     };
   }
 
-  // Single kind: stats genuinely apply to every unit in the group. Current HP
-  // still only makes sense for exactly one unit.
+  // Exactly one unit: attributes genuinely describe it.
   const kind = distinctKinds[0];
-  const many = total > 1;
   if (kind === "villager") {
     return {
       key: selectedSelectionKey(),
-      title: many ? `${total} Villagers` : "Villager",
+      title: "Villager",
       portrait: "🧑‍🌾",
-      description: many
-        ? "Right-click ground to move as a group, or a resource for all to gather."
-        : "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
+      description:
+        "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
       commands: villagerCommands(),
     };
   }
@@ -548,13 +556,12 @@ function buildSelectionInfo(): SelectionInfo | null {
   const lead = selectedSoldiers[0];
   return {
     key: selectedSelectionKey(),
-    title: many ? `${total} ${stats.label}s` : stats.label,
+    title: stats.label,
     portrait: unitIcon(kind),
-    description: many
-      ? "Right-click ground to reposition the group, or a wolf to attack it."
-      : "Right-click ground to reposition it, or a wolf to attack. Holds and defends wherever you send it.",
-    hp: many ? undefined : lead.hp,
-    maxHp: many ? undefined : stats.maxHp,
+    description:
+      "Right-click ground to reposition it, or a wolf to attack. Holds and defends wherever you send it.",
+    hp: lead.hp,
+    maxHp: stats.maxHp,
     stats: [
       ["⚔️ Damage", `${stats.attackDamage}`],
       ["➹ Range", `${stats.attackRange}`],

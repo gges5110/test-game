@@ -65,6 +65,11 @@ export interface SelectionInfo {
   hp?: number;
   maxHp?: number;
   stats?: [string, string][];
+  /** For a multi-unit selection: one icon per selected unit, shown instead
+   * of a portrait and per-unit attributes (which only describe one unit). */
+  unitGrid?: { icon: string; tooltip: string }[];
+  /** Clicking a unit icon narrows the selection to just that unit. */
+  onPickUnit?: (index: number) => void;
   /** Contextual commands for this selection, filling the command grid. */
   commands?: CommandButton[];
   /** Pending unit production, shown as a clickable icon strip. */
@@ -100,6 +105,7 @@ export class Hud {
   private queueStatusEl: HTMLElement | null = null;
   private lastQueueSig = "";
   private onCancelQueued: (index: number) => void = () => {};
+  private onPickUnit: (index: number) => void = () => {};
   /** Root commands for the current selection, plus which sub-page (by index
    * path) is drilled into — AoE2's Build → Economic/Military pages. */
   private rootCommands: CommandButton[] = [];
@@ -200,7 +206,12 @@ export class Hud {
         return;
       }
       const queued = target.closest<HTMLElement>(".queue-item");
-      if (queued) this.onCancelQueued(Number(queued.dataset.i));
+      if (queued) {
+        this.onCancelQueued(Number(queued.dataset.i));
+        return;
+      }
+      const unit = target.closest<HTMLElement>(".unit-chip");
+      if (unit) this.onPickUnit(Number(unit.dataset.i));
     });
 
     this.inventory.onChange(() => this.renderInventory());
@@ -388,15 +399,27 @@ export class Hud {
       `
       : "";
 
+    this.onPickUnit = info.onPickUnit ?? (() => {});
+    const body = info.unitGrid
+      ? `<div class="unit-grid">${info.unitGrid
+          .map(
+            (u, i) =>
+              `<button class="unit-chip" data-i="${i}" title="${u.tooltip}">${u.icon}</button>`,
+          )
+          .join("")}</div>`
+      : `
+        <div class="info-body">
+          <div class="portrait">${info.portrait ?? "❔"}</div>
+          <div class="info-stats">
+            ${hpBlock}
+            ${statsRows}
+          </div>
+        </div>
+      `;
+
     this.infoEl.innerHTML = `
       <div class="info-name">${info.title}<button class="menu-close">✕</button></div>
-      <div class="info-body">
-        <div class="portrait">${info.portrait ?? "❔"}</div>
-        <div class="info-stats">
-          ${hpBlock}
-          ${statsRows}
-        </div>
-      </div>
+      ${body}
       ${queueBlock}
       <div class="desc">${info.description}</div>
     `;

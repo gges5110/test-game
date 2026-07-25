@@ -2,16 +2,38 @@ import * as THREE from "three";
 import { createHealthBar, type HealthBar } from "./healthBar";
 import { TEXTURES } from "../systems/textures";
 
+/** Every (kind, repeat) pair always looks identical, so the actual GPU
+ * textures are cached and shared rather than re-cloned per call. Building a
+ * mesh happens constantly — once for the placement ghost, again on confirm,
+ * again for every other building of that type — and each clone used to
+ * upload a fresh WebGLTexture that nothing ever freed. Desktop GPUs have
+ * enough headroom to hide that leak; on mobile it runs out and the tab
+ * crashes, which is what "crashes when I place a building" actually was. */
+const textureCache = new Map<string, { map: THREE.CanvasTexture; normalMap: THREE.CanvasTexture }>();
+
+function cachedTextures(kind: "wood" | "stone", repeat: number) {
+  const key = `${kind}:${repeat}`;
+  let entry = textureCache.get(key);
+  if (!entry) {
+    const src = TEXTURES[kind];
+    const map = src.map.clone();
+    const normalMap = src.normalMap.clone();
+    map.repeat.set(repeat, repeat);
+    normalMap.repeat.set(repeat, repeat);
+    map.needsUpdate = true;
+    normalMap.needsUpdate = true;
+    entry = { map, normalMap };
+    textureCache.set(key, entry);
+  }
+  return entry;
+}
+
 /** A tinted MeshStandardMaterial using one of our procedural PBR texture
- * sets (diffuse + normal map) instead of a flat color. */
+ * sets (diffuse + normal map) instead of a flat color. Each call still
+ * returns its own Material instance (construction fades opacity per
+ * building), but the textures backing it are shared. */
 function texturedMaterial(kind: "wood" | "stone", color: number, repeat = 2): THREE.MeshStandardMaterial {
-  const src = TEXTURES[kind];
-  const map = src.map.clone();
-  const normalMap = src.normalMap.clone();
-  map.repeat.set(repeat, repeat);
-  normalMap.repeat.set(repeat, repeat);
-  map.needsUpdate = true;
-  normalMap.needsUpdate = true;
+  const { map, normalMap } = cachedTextures(kind, repeat);
   return new THREE.MeshStandardMaterial({
     color,
     map,
@@ -465,4 +487,17 @@ export function makeGhost(mesh: THREE.Group): THREE.Group {
     }
   });
   return mesh;
+}
+
+/** Frees a building mesh's own geometries and materials — used when a
+ * placement ghost is discarded/replaced or a building is destroyed. Textures
+ * are deliberately left alone: they're shared via the cache in
+ * `texturedMaterial` and outlive any single mesh. */
+export function disposeBuildingMesh(mesh: THREE.Group) {
+  mesh.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    child.geometry.dispose();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) material.dispose();
+  });
 }

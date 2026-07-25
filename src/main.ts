@@ -9,6 +9,7 @@ import {
   attachHealthBar,
   captureStructureMeshes,
   setConstructionAppearance,
+  disposeBuildingMesh,
 } from "./world/buildings";
 import type { HealthBar } from "./world/healthBar";
 import { Villager } from "./world/villager";
@@ -685,7 +686,10 @@ let ghost: THREE.Group | null = null;
 const MIN_BUILDING_SPACING = 3;
 
 function startPlacement(building: BuildingDef) {
-  if (ghost) scene.remove(ghost);
+  if (ghost) {
+    scene.remove(ghost);
+    disposeBuildingMesh(ghost);
+  }
   selectedBuildingType = building;
   ghost = makeGhost(createBuildingMesh(building.id));
   ghost.position.set(
@@ -698,7 +702,10 @@ function startPlacement(building: BuildingDef) {
 }
 
 function cancelPlacement() {
-  if (ghost) scene.remove(ghost);
+  if (ghost) {
+    scene.remove(ghost);
+    disposeBuildingMesh(ghost);
+  }
   ghost = null;
   selectedBuildingType = null;
   hud.setPlacementMode(false);
@@ -955,6 +962,7 @@ function damageBuilding(building: PlacedBuilding, amount: number) {
   const destroyed = townBuildings.damage(building, amount);
   if (destroyed) {
     townBuildings.remove(building, scene);
+    disposeBuildingMesh(building.mesh);
     if (selectedBuildingInfo === building) {
       selectedBuildingInfo = null;
       syncSelectionOutline();

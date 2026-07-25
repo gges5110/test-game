@@ -121,7 +121,7 @@ export class Hud {
 
         <div class="aoe-minimap-wrap">
           <canvas class="minimap-canvas" width="150" height="150"></canvas>
-          <div class="hint">WASD pan · scroll zoom · left-click select · left-drag box-select · right-click command · Esc deselect</div>
+          <div class="hint">Click minimap to jump · WASD pan · right-click to command</div>
         </div>
       </div>
     `;
@@ -339,17 +339,16 @@ export class Hud {
     }
   }
 
-  /** Shown when nothing is selected — keeps the panel occupying its usual
-   * space (instead of collapsing to nothing) so the minimap/commands next
-   * to it don't shift position every time selection changes. */
+  /** Nothing selected: blank the panel out entirely (no filler text), but
+   * keep its element in the flex layout via CSS visibility rather than
+   * `hidden`/display:none — collapsing it would reflow the minimap and
+   * commands beside it every time selection changes. */
   private showDefaultSelectionInfo() {
-    if (this.lastInfoKeyRef === null) return; // already showing it
+    if (this.lastInfoKeyRef === null) return; // already blank
     this.lastInfoKeyRef = null;
     this.lastInfoActionCount = -1;
-    this.infoEl.innerHTML = `
-      <h2>🏰 Town Overview</h2>
-      <div class="desc">Select a villager, soldier, or building to see details and actions here.</div>
-    `;
+    this.infoEl.innerHTML = "";
+    this.infoEl.classList.add("empty");
     this.hpFillEl = null;
     this.hpTextEl = null;
     this.actionButtonEls = [];
@@ -370,6 +369,7 @@ export class Hud {
       .map((a, i) => `<button class="info-action" data-i="${i}">${a.label}</button>`)
       .join("");
 
+    this.infoEl.classList.remove("empty");
     this.infoEl.innerHTML = `
       <h2>${info.title}<button class="menu-close">✕</button></h2>
       <div class="desc">${info.description}</div>

@@ -199,7 +199,7 @@ html, body {
 
 #hud .prompt {
   position: absolute;
-  bottom: 184px;
+  bottom: 202px;
   left: 50%;
   transform: translateX(-50%);
   background: linear-gradient(180deg, var(--wood-light) 0%, var(--wood-mid) 55%, var(--wood-dark) 100%);
@@ -224,12 +224,16 @@ html, body {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 168px;
+  height: 186px;
   display: flex;
   align-items: stretch;
   gap: 8px;
   padding: 8px;
   pointer-events: auto;
+  /* Small UI text needs a sans face and a lighter shadow — the page's
+     Georgia + heavy drop shadow muddies anything under ~14px. */
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7);
   background: linear-gradient(180deg, var(--wood-light) 0%, var(--wood-mid) 45%, var(--wood-dark) 100%);
   border-top: 4px solid var(--bronze);
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.6), inset 0 2px 0 rgba(255, 255, 255, 0.1);
@@ -245,7 +249,7 @@ html, body {
 
 #hud .cmd-grid {
   display: grid;
-  grid-template-columns: repeat(5, 58px);
+  grid-template-columns: repeat(5, 64px);
   grid-template-rows: repeat(3, 1fr);
   gap: 4px;
 }
@@ -265,10 +269,9 @@ html, body {
   gap: 1px;
   border: 1px solid var(--bronze);
   border-radius: 4px;
-  padding: 2px;
+  padding: 3px 2px;
   background: linear-gradient(180deg, #6b8fa8 0%, #2b4c60 100%);
   color: #fff;
-  font-family: Georgia, serif;
   cursor: pointer;
   overflow: hidden;
   transition: filter 0.12s ease, transform 0.08s ease, border-color 0.12s ease;
@@ -295,13 +298,14 @@ html, body {
 }
 
 #hud .cmd-icon {
-  font-size: 20px;
-  line-height: 1.1;
+  font-size: 21px;
+  line-height: 1.05;
 }
 
 #hud .cmd-name {
-  font-size: 9px;
-  line-height: 1.1;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.15;
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
@@ -310,9 +314,13 @@ html, body {
 }
 
 #hud .cmd-sub {
-  font-size: 9px;
-  line-height: 1.1;
-  opacity: 0.85;
+  font-size: 11px;
+  line-height: 1.15;
+  color: var(--bronze-bright);
+}
+
+#hud .cmd-btn:disabled .cmd-sub {
+  color: #e8b0b0;
 }
 
 #hud .placement-buttons {
@@ -357,6 +365,7 @@ html, body {
 #hud .building-info {
   flex: 1 1 auto;
   min-width: 0;
+  max-width: 340px;
   background: rgba(0, 0, 0, 0.28);
   border: 2px solid var(--bronze);
   border-radius: 6px;
@@ -364,16 +373,12 @@ html, body {
   overflow-y: auto;
 }
 
-#hud .building-info.empty {
-  visibility: hidden;
-}
-
 #hud .info-name {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--bronze-bright);
   border-bottom: 1px solid rgba(201, 162, 39, 0.4);
@@ -424,7 +429,7 @@ html, body {
 #hud .info-stats {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12.5px;
 }
 
 #hud .building-info .hp-track {
@@ -442,29 +447,32 @@ html, body {
 }
 
 #hud .building-info .hp-text {
-  font-size: 11px;
-  opacity: 0.9;
-  margin: 2px 0 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin: 3px 0 5px;
 }
 
 #hud .stat-row {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  line-height: 1.35;
+  line-height: 1.5;
 }
 
 #hud .building-info .desc {
-  font-size: 11px;
-  opacity: 0.75;
-  margin-top: 6px;
-  line-height: 1.3;
+  font-size: 12px;
+  opacity: 0.85;
+  margin-top: 7px;
+  line-height: 1.35;
 }
 
-/* --- right: minimap --- */
+/* --- right: minimap ---
+   margin-left:auto pins it to the right edge, so hiding the command grid
+   and attributes panel (when nothing is selected) can't slide it left. */
 
 #hud .aoe-minimap-wrap {
   flex: 0 0 auto;
+  margin-left: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -472,8 +480,8 @@ html, body {
 }
 
 #hud .minimap-canvas {
-  width: 122px;
-  height: 122px;
+  width: 130px;
+  height: 130px;
   border: 3px solid var(--bronze);
   border-radius: 4px;
   box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.7);
@@ -481,9 +489,9 @@ html, body {
 }
 
 #hud .hint {
-  font-size: 9px;
-  line-height: 1.25;
-  opacity: 0.7;
-  max-width: 128px;
+  font-size: 11px;
+  line-height: 1.3;
+  opacity: 0.8;
+  max-width: 136px;
   text-align: center;
 }

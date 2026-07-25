@@ -76,6 +76,7 @@ export class Hud {
   private waveWarningEl: HTMLElement;
   private promptEl: HTMLElement;
   private cmdGridEl: HTMLElement;
+  private commandsWrapEl: HTMLElement;
   private placementButtonsEl: HTMLElement;
   private selectBoxEl: HTMLElement;
   private infoEl: HTMLElement;
@@ -92,6 +93,7 @@ export class Hud {
   private currentPageCommands: CommandButton[] = [];
   private cmdButtonEls: HTMLButtonElement[] = [];
   private settingsMenuOpen = false;
+  private placementActive = false;
   private onConfirmPlacement: () => void = () => {};
   private onCancelPlacement: () => void = () => {};
   private onReset: () => void = () => {};
@@ -136,6 +138,7 @@ export class Hud {
     this.waveWarningEl = root.querySelector(".wave-warning")!;
     this.promptEl = root.querySelector(".prompt")!;
     this.cmdGridEl = root.querySelector(".cmd-grid")!;
+    this.commandsWrapEl = root.querySelector(".aoe-commands")!;
     this.placementButtonsEl = root.querySelector(".placement-buttons")!;
     this.selectBoxEl = root.querySelector(".select-box")!;
     this.infoEl = root.querySelector(".building-info")!;
@@ -241,8 +244,19 @@ export class Hud {
   setPlacementMode(active: boolean) {
     // Placement takes over the command zone (AoE2 shows only a cancel
     // affordance while a foundation is being positioned).
+    this.placementActive = active;
     this.placementButtonsEl.hidden = !active;
     this.cmdGridEl.hidden = active;
+    this.updateBarZones();
+  }
+
+  /** The command grid and attributes panel only exist while they have
+   * something to show — with nothing selected the bar is just the minimap.
+   * The minimap is pinned right in CSS so collapsing these doesn't move it. */
+  private updateBarZones() {
+    const hasSelection = this.lastInfoKeyRef !== null;
+    this.infoEl.hidden = !hasSelection;
+    this.commandsWrapEl.hidden = !hasSelection && !this.placementActive;
   }
 
   setOnCloseInfo(handler: () => void) {
@@ -299,6 +313,7 @@ export class Hud {
       this.renderSelectionSkeleton(info);
       this.rootCommands = info.commands ?? [];
       this.renderCommandGrid();
+      this.updateBarZones();
     } else {
       // Same selection refreshed this frame — update values in place so
       // the button/HP nodes stay alive (preserves :hover/:active, and
@@ -323,6 +338,7 @@ export class Hud {
     this.rootCommands = [];
     this.commandPath = [];
     this.renderCommandGrid();
+    this.updateBarZones();
   }
 
   private renderSelectionSkeleton(info: SelectionInfo) {

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { createTerrain, heightAt, WORLD_SIZE } from "./world/terrain";
-import { ResourceManager } from "./world/resources";
+import { ResourceManager, type ResourceType } from "./world/resources";
 import {
   createBuildingMesh,
   makeGhost,
@@ -12,7 +12,7 @@ import { Villager } from "./world/villager";
 import { Soldier, getUnitStats, type UnitKind } from "./world/soldier";
 import { Wolf } from "./world/enemy";
 import { Inventory } from "./systems/inventory";
-import { Crafting } from "./systems/crafting";
+import { Crafting, RECIPES } from "./systems/crafting";
 import {
   BUILDINGS,
   BuildManager,
@@ -24,7 +24,14 @@ import { createLighting } from "./systems/lighting";
 import { createComposer } from "./systems/postfx";
 import { RtsCamera } from "./systems/rtsCamera";
 import { saveGame, loadGame, clearSave, type SaveData } from "./systems/save";
-import { Hud, type SelectionInfo, type SelectionAction } from "./ui/hud";
+import {
+  Hud,
+  BUILDING_ICON,
+  RECIPE_ICON,
+  RESOURCE_ICON,
+  type SelectionInfo,
+  type CommandButton,
+} from "./ui/hud";
 
 const canvas = document.getElementById("view") as HTMLCanvasElement;
 const hudRoot = document.getElementById("hud") as HTMLElement;
@@ -64,7 +71,7 @@ const resources = new ResourceManager(scene);
 const inventory = new Inventory();
 const buildManager = new BuildManager(inventory);
 const crafting = new Crafting(inventory, buildManager);
-const hud = new Hud(hudRoot, inventory, crafting, buildManager);
+const hud = new Hud(hudRoot, inventory);
 const townBuildings = new TownBuildings();
 
 function gatherBonus(type: Parameters<typeof crafting.gatherBonus>[0]) {
@@ -303,64 +310,148 @@ function repairBuilding(building: PlacedBuilding) {
   building.hp = Math.min(building.maxHp, building.hp + healed);
 }
 
+// AoE2 splits a villager's Build menu into economic and military pages.
+const ECONOMIC_BUILDINGS = ["house", "farm", "mill", "lumber_camp", "mining_camp"];
+const MILITARY_BUILDINGS = [
+  "barracks",
+  "archery_range",
+  "stable",
+  "blacksmith",
+  "outpost",
+  "castle",
+];
+
+function costSummary(cost: Partial<Record<ResourceType, number>>): string {
+  return Object.entries(cost)
+    .map(([type, amt]) => `${amt}${RESOURCE_ICON[type as ResourceType]}`)
+    .join(" ");
+}
+
+function buildingCommand(def: BuildingDef): CommandButton {
+  const owned = buildManager.countBuilt(def.id);
+  const maxedOut = def.maxBuilt !== undefined && owned >= def.maxBuilt;
+  const needsTownCenter =
+    def.requiresTownCenter && buildManager.countBuilt("town_center") === 0;
+  let sub = costSummary(def.cost);
+  if (maxedOut) sub = "Built";
+  else if (needsTownCenter) sub = "Need TC";
+  return {
+    icon: BUILDING_ICON[def.id] ?? "🏗️",
+    label: def.name,
+    sub,
+    disabled: !buildManager.canBuild(def),
+    tooltip: `${def.name} — ${def.description}`,
+    onClick: () => startPlacement(def),
+  };
+}
+
+/** Commands a villager offers: AoE2's Build ▸ Economic / Military pages. */
+function villagerCommands(): CommandButton[] {
+  return [
+    {
+      icon: "🏗️",
+      label: "Build",
+      sub: "Economic",
+      tooltip: "Economic buildings",
+      children: ECONOMIC_BUILDINGS.map((id) => buildingCommand(getBuildingDef(id))),
+    },
+    {
+      icon: "⚔️",
+      label: "Build",
+      sub: "Military",
+      tooltip: "Military buildings",
+      children: MILITARY_BUILDINGS.map((id) => buildingCommand(getBuildingDef(id))),
+    },
+  ];
+}
+
+/** Commands a building offers: train its unit, research its techs, repair. */
+function buildingCommands(building: PlacedBuilding): CommandButton[] {
+  const commands: CommandButton[] = [];
+  const def = building.def;
+
+  if (def.trains) {
+    if (building.producingUntil !== undefined) {
+      const remaining = Math.max(0, building.producingUntil - clock.getElapsedTime());
+      commands.push({
+        icon: "⏳",
+        label: unitLabel(def.trains.unit),
+        sub: `${remaining.toFixed(1)}s`,
+        disabled: true,
+        tooltip: `Training ${unitLabel(def.trains.unit)}…`,
+      });
+    } else {
+      commands.push({
+        icon: def.trains.unit === "villager" ? "🧑‍🌾" : "🛡️",
+        label: unitLabel(def.trains.unit),
+        sub: `${def.trains.foodCost}${RESOURCE_ICON.food}`,
+        disabled: !inventory.has("food", def.trains.foodCost),
+        tooltip: `Train ${unitLabel(def.trains.unit)}`,
+        onClick: () => startProduction(building),
+      });
+    }
+  }
+
+  // Blacksmith researches the tool upgrades, AoE2-style (techs live in the
+  // building that unlocks them rather than a global crafting menu).
+  if (building.type === "blacksmith") {
+    for (const recipe of RECIPES) {
+      const owned = crafting.countOf(recipe.id);
+      const maxedOut = recipe.maxOwned !== undefined && owned >= recipe.maxOwned;
+      commands.push({
+        icon: RECIPE_ICON[recipe.id] ?? "🛠️",
+        label: recipe.name,
+        sub: maxedOut ? "Done" : costSummary(recipe.cost),
+        disabled: !crafting.canCraft(recipe),
+        tooltip: `${recipe.name} — ${recipe.description}`,
+        onClick: () => crafting.craft(recipe),
+      });
+    }
+  }
+
+  if (building.hp < building.maxHp) {
+    const fullCost = Math.max(
+      1,
+      Math.ceil((building.maxHp - building.hp) * REPAIR_WOOD_PER_HP),
+    );
+    const spend = Math.min(fullCost, inventory.get("wood"));
+    commands.push({
+      icon: "🔧",
+      label: "Repair",
+      sub: `${spend}/${fullCost}${RESOURCE_ICON.wood}`,
+      disabled: spend <= 0,
+      tooltip:
+        spend >= fullCost
+          ? `Repair fully for ${fullCost} wood`
+          : `Partial repair with ${spend} of ${fullCost} wood`,
+      onClick: () => repairBuilding(building),
+    });
+  }
+
+  return commands;
+}
+
 function buildSelectionInfo(): SelectionInfo | null {
   if (selectedBuildingInfo) {
     const building = selectedBuildingInfo;
     const def = building.def;
     const stats: [string, string][] = def.attack
       ? [
-          ["Range", `${def.attack.range}`],
-          ["Damage", `${def.attack.damage}`],
-          ["Cooldown", `${def.attack.cooldown}s`],
+          ["⚔️ Damage", `${def.attack.damage}`],
+          ["➹ Range", `${def.attack.range}`],
+          ["⏱ Cooldown", `${def.attack.cooldown}s`],
         ]
       : [];
-
-    const actions: SelectionAction[] = [];
-    if (def.trains) {
-      if (building.producingUntil !== undefined) {
-        const remaining = Math.max(
-          0,
-          building.producingUntil - clock.getElapsedTime(),
-        );
-        actions.push({
-          label: `Training ${unitLabel(def.trains.unit)}… ${remaining.toFixed(1)}s`,
-          disabled: true,
-          onClick: () => {},
-        });
-      } else {
-        const affordable = inventory.has("food", def.trains.foodCost);
-        actions.push({
-          label: `Train ${unitLabel(def.trains.unit)} (${def.trains.foodCost} food)`,
-          disabled: !affordable,
-          onClick: () => startProduction(building),
-        });
-      }
-    }
-    if (building.hp < building.maxHp) {
-      const fullCost = Math.max(
-        1,
-        Math.ceil((building.maxHp - building.hp) * REPAIR_WOOD_PER_HP),
-      );
-      const spend = Math.min(fullCost, inventory.get("wood"));
-      const label =
-        spend >= fullCost
-          ? `Repair (${fullCost} wood)`
-          : `Repair (${spend}/${fullCost} wood — partial)`;
-      actions.push({
-        label,
-        disabled: spend <= 0,
-        onClick: () => repairBuilding(building),
-      });
-    }
 
     return {
       key: building,
       title: def.name,
+      portrait: BUILDING_ICON[def.id] ?? "🏗️",
       description: def.description,
       hp: building.hp,
       maxHp: building.maxHp,
       stats,
-      actions,
+      commands: buildingCommands(building),
     };
   }
 
@@ -369,34 +460,30 @@ function buildSelectionInfo(): SelectionInfo | null {
     return {
       key: selectedSoldier,
       title: stats.label,
-      description:
-        "Trained by a Barracks/Archery Range/Stable. Patrols near home and auto-attacks any wolf within range.",
+      portrait: selectedSoldier.kind === "archer" ? "🏹" : selectedSoldier.kind === "scout" ? "🐎" : "🛡️",
+      description: "Patrols near home and auto-attacks any wolf within range.",
       hp: selectedSoldier.hp,
       maxHp: stats.maxHp,
       stats: [
-        ["Damage", `${stats.attackDamage}`],
-        ["Attack range", `${stats.attackRange}`],
-        ["Cooldown", `${stats.attackCooldown}s`],
-        ["Leash range", `${stats.leashRange}`],
+        ["⚔️ Damage", `${stats.attackDamage}`],
+        ["➹ Range", `${stats.attackRange}`],
+        ["⏱ Cooldown", `${stats.attackCooldown}s`],
+        ["⛓ Leash", `${stats.leashRange}`],
       ],
+      commands: [],
     };
   }
 
-  if (selectedVillagers.length === 1) {
+  if (selectedVillagers.length > 0) {
+    const many = selectedVillagers.length > 1;
     return {
       key: selectedVillagers,
-      title: "Villager",
-      description:
-        "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
-    };
-  }
-
-  if (selectedVillagers.length > 1) {
-    return {
-      key: selectedVillagers,
-      title: `${selectedVillagers.length} Villagers`,
-      description:
-        "Right-click ground to move as a group, or a resource for all to gather.",
+      title: many ? `${selectedVillagers.length} Villagers` : "Villager",
+      portrait: "🧑‍🌾",
+      description: many
+        ? "Right-click ground to move as a group, or a resource for all to gather."
+        : "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
+      commands: villagerCommands(),
     };
   }
 
@@ -410,7 +497,7 @@ let selectedBuildingType: BuildingDef | null = null;
 let ghost: THREE.Group | null = null;
 const MIN_BUILDING_SPACING = 3;
 
-hud.setOnSelectBuilding((building) => {
+function startPlacement(building: BuildingDef) {
   if (ghost) scene.remove(ghost);
   selectedBuildingType = building;
   ghost = makeGhost(createBuildingMesh(building.id));
@@ -421,7 +508,7 @@ hud.setOnSelectBuilding((building) => {
   );
   scene.add(ghost);
   hud.setPlacementMode(true);
-});
+}
 
 function cancelPlacement() {
   if (ghost) scene.remove(ghost);

@@ -1,6 +1,4 @@
 import { Inventory } from "../systems/inventory";
-import { Crafting, RECIPES } from "../systems/crafting";
-import { BUILDINGS, BuildManager, type BuildingDef } from "../systems/building";
 import type { ResourceType } from "../world/resources";
 
 const RESOURCE_LABEL: Record<ResourceType, string> = {
@@ -9,13 +7,13 @@ const RESOURCE_LABEL: Record<ResourceType, string> = {
   food: "🍞 Food",
 };
 
-const RESOURCE_ICON: Record<ResourceType, string> = {
+export const RESOURCE_ICON: Record<ResourceType, string> = {
   wood: "🪵",
   stone: "🪨",
   food: "🍞",
 };
 
-const BUILDING_ICON: Record<string, string> = {
+export const BUILDING_ICON: Record<string, string> = {
   town_center: "🏛️",
   house: "🏠",
   farm: "🌾",
@@ -30,15 +28,26 @@ const BUILDING_ICON: Record<string, string> = {
   castle: "🏰",
 };
 
-const RECIPE_ICON: Record<string, string> = {
+export const RECIPE_ICON: Record<string, string> = {
   basic_tool: "🔧",
   iron_tool: "⚒️",
 };
 
-export interface SelectionAction {
+/** Fixed 5x3 command grid, matching AoE2's command panel footprint. */
+const COMMAND_SLOTS = 15;
+
+/** One slot in the AoE2-style command grid. A button either performs an
+ * action (`onClick`) or drills into a sub-page of more commands
+ * (`children`) — mirroring AoE2's villager Build → Economic/Military pages. */
+export interface CommandButton {
+  icon: string;
   label: string;
-  disabled: boolean;
-  onClick: () => void;
+  /** Small second line, e.g. a cost summary. */
+  sub?: string;
+  disabled?: boolean;
+  tooltip?: string;
+  onClick?: () => void;
+  children?: CommandButton[];
 }
 
 export interface SelectionInfo {
@@ -50,11 +59,14 @@ export interface SelectionInfo {
    * node) even though click still worked via delegation. */
   key: unknown;
   title: string;
+  /** Emoji shown in the framed portrait box, AoE2-style. */
+  portrait?: string;
   description: string;
   hp?: number;
   maxHp?: number;
   stats?: [string, string][];
-  actions?: SelectionAction[];
+  /** Contextual commands for this selection, filling the command grid. */
+  commands?: CommandButton[];
 }
 
 export class Hud {
@@ -63,24 +75,23 @@ export class Hud {
   private settingsMenuEl: HTMLElement;
   private waveWarningEl: HTMLElement;
   private promptEl: HTMLElement;
-  private commandsDefaultEl: HTMLElement;
-  private commandsPanelEl: HTMLElement;
+  private cmdGridEl: HTMLElement;
   private placementButtonsEl: HTMLElement;
   private selectBoxEl: HTMLElement;
   private infoEl: HTMLElement;
   private minimapCanvas: HTMLCanvasElement;
   private minimapCtx: CanvasRenderingContext2D;
   private onMinimapClick: (x: number, z: number) => void = () => {};
-  private currentSelectionActions: SelectionAction[] = [];
   private lastInfoKeyRef: unknown = undefined;
-  private lastInfoActionCount = -1;
   private hpFillEl: HTMLElement | null = null;
   private hpTextEl: HTMLElement | null = null;
-  private actionButtonEls: HTMLButtonElement[] = [];
-  /** Which content the shared command panel is currently showing. */
-  private commandsMode: "default" | "craft" | "build" = "default";
+  /** Root commands for the current selection, plus which sub-page (by index
+   * path) is drilled into — AoE2's Build → Economic/Military pages. */
+  private rootCommands: CommandButton[] = [];
+  private commandPath: number[] = [];
+  private currentPageCommands: CommandButton[] = [];
+  private cmdButtonEls: HTMLButtonElement[] = [];
   private settingsMenuOpen = false;
-  private onSelectBuilding: (building: BuildingDef) => void = () => {};
   private onConfirmPlacement: () => void = () => {};
   private onCancelPlacement: () => void = () => {};
   private onReset: () => void = () => {};
@@ -89,8 +100,6 @@ export class Hud {
   constructor(
     root: HTMLElement,
     private inventory: Inventory,
-    private crafting: Crafting,
-    private buildManager: BuildManager,
   ) {
     root.innerHTML = `
       <div class="inventory"></div>
@@ -105,19 +114,15 @@ export class Hud {
       <div class="select-box" hidden></div>
 
       <div class="aoe-bar">
-        <div class="building-info"></div>
-
         <div class="aoe-commands">
-          <div class="commands-default">
-            <button class="qbtn" id="craftBtn" title="Crafting (C)">🛠️<span>Craft</span></button>
-            <button class="qbtn" id="buildBtn" title="Build (B)">🏗️<span>Build</span></button>
-          </div>
-          <div class="commands-panel" hidden></div>
+          <div class="cmd-grid"></div>
           <div class="placement-buttons" hidden>
             <button class="pbtn pbtn-confirm">✓ Place</button>
             <button class="pbtn pbtn-cancel">✕ Cancel</button>
           </div>
         </div>
+
+        <div class="building-info"></div>
 
         <div class="aoe-minimap-wrap">
           <canvas class="minimap-canvas" width="150" height="150"></canvas>
@@ -130,37 +135,33 @@ export class Hud {
     this.settingsMenuEl = root.querySelector(".settings-menu")!;
     this.waveWarningEl = root.querySelector(".wave-warning")!;
     this.promptEl = root.querySelector(".prompt")!;
-    this.commandsDefaultEl = root.querySelector(".commands-default")!;
-    this.commandsPanelEl = root.querySelector(".commands-panel")!;
+    this.cmdGridEl = root.querySelector(".cmd-grid")!;
     this.placementButtonsEl = root.querySelector(".placement-buttons")!;
     this.selectBoxEl = root.querySelector(".select-box")!;
     this.infoEl = root.querySelector(".building-info")!;
     this.minimapCanvas = root.querySelector(".minimap-canvas")!;
     this.minimapCtx = this.minimapCanvas.getContext("2d")!;
     this.showDefaultSelectionInfo();
+    this.renderCommandGrid();
 
-    // Delegated on the panel itself (persists across re-renders) rather
-    // than rebound per-button, since it can be redrawn every frame.
-    this.commandsPanelEl.addEventListener("click", (e) => {
+    // Delegated on the grid (persists across re-renders) rather than
+    // rebound per-button, since the grid can be redrawn every frame.
+    this.cmdGridEl.addEventListener("click", (e) => {
       const target = e.target as HTMLElement;
-      if (target.closest(".menu-close")) {
-        this.showCommandsDefault();
+      if (target.closest(".cmd-back")) {
+        this.commandPath.pop();
+        this.renderCommandGrid();
         return;
       }
-      const cmdBtn = target.closest<HTMLButtonElement>(".cmd-btn");
-      if (!cmdBtn) return;
-      if (this.commandsMode === "build") {
-        const building = BUILDINGS.find((b) => b.id === cmdBtn.dataset.id);
-        if (building) {
-          this.onSelectBuilding(building);
-          this.showCommandsDefault();
-        }
-      } else if (this.commandsMode === "craft") {
-        const recipe = RECIPES.find((r) => r.id === cmdBtn.dataset.id);
-        if (recipe) {
-          this.crafting.craft(recipe);
-          this.renderCraftPanel();
-        }
+      const btn = target.closest<HTMLButtonElement>(".cmd-btn");
+      if (!btn || btn.disabled) return;
+      const cmd = this.currentPageCommands[Number(btn.dataset.i)];
+      if (!cmd) return;
+      if (cmd.children) {
+        this.commandPath.push(Number(btn.dataset.i));
+        this.renderCommandGrid();
+      } else {
+        cmd.onClick?.();
       }
     });
 
@@ -181,31 +182,11 @@ export class Hud {
         this.onCloseInfo();
         return;
       }
-      const actionBtn = target.closest<HTMLButtonElement>(".info-action");
-      if (actionBtn) {
-        this.currentSelectionActions[Number(actionBtn.dataset.i)]?.onClick();
-      }
     });
 
-    this.inventory.onChange(() => {
-      this.renderInventory();
-      // Re-render the open command panel so Craft/Place buttons reflect
-      // newly available resources.
-      if (this.commandsMode === "craft") this.renderCraftPanel();
-      if (this.commandsMode === "build") this.renderBuildPanel();
-    });
+    this.inventory.onChange(() => this.renderInventory());
     this.renderInventory();
 
-    root.querySelector("#craftBtn")!.addEventListener("click", () => {
-      this.settingsMenuOpen = false;
-      this.settingsMenuEl.hidden = true;
-      this.toggleCommandsMode("craft");
-    });
-    root.querySelector("#buildBtn")!.addEventListener("click", () => {
-      this.settingsMenuOpen = false;
-      this.settingsMenuEl.hidden = true;
-      this.toggleCommandsMode("build");
-    });
     this.placementButtonsEl
       .querySelector(".pbtn-confirm")!
       .addEventListener("click", () => this.onConfirmPlacement());
@@ -229,15 +210,12 @@ export class Hud {
     });
 
     window.addEventListener("keydown", (e) => {
-      if (e.code === "KeyC") {
-        this.toggleCommandsMode("craft");
-      } else if (e.code === "KeyB") {
-        this.toggleCommandsMode("build");
-      } else if (e.code === "Enter") {
+      if (e.code === "Enter") {
         this.onConfirmPlacement();
       } else if (e.code === "Escape") {
-        if (this.commandsMode !== "default") {
-          this.showCommandsDefault();
+        if (this.commandPath.length > 0) {
+          this.commandPath.pop();
+          this.renderCommandGrid();
         } else if (this.settingsMenuOpen) {
           this.settingsMenuOpen = false;
           this.settingsMenuEl.hidden = true;
@@ -246,11 +224,6 @@ export class Hud {
         }
       }
     });
-  }
-
-  /** Called when the player picks a building to place from the build menu. */
-  setOnSelectBuilding(handler: (building: BuildingDef) => void) {
-    this.onSelectBuilding = handler;
   }
 
   setOnConfirmPlacement(handler: () => void) {
@@ -266,16 +239,10 @@ export class Hud {
   }
 
   setPlacementMode(active: boolean) {
+    // Placement takes over the command zone (AoE2 shows only a cancel
+    // affordance while a foundation is being positioned).
     this.placementButtonsEl.hidden = !active;
-    // Placement replaces the commands zone's content entirely, instead of
-    // stacking Confirm/Cancel underneath the quick-buttons/grid.
-    if (active) {
-      this.commandsDefaultEl.hidden = true;
-      this.commandsPanelEl.hidden = true;
-    } else {
-      this.commandsDefaultEl.hidden = this.commandsMode !== "default";
-      this.commandsPanelEl.hidden = this.commandsMode === "default";
-    }
+    this.cmdGridEl.hidden = active;
   }
 
   setOnCloseInfo(handler: () => void) {
@@ -322,20 +289,23 @@ export class Hud {
       this.showDefaultSelectionInfo();
       return;
     }
-    this.currentSelectionActions = info.actions ?? [];
 
-    const actionCount = this.currentSelectionActions.length;
-    if (info.key !== this.lastInfoKeyRef || actionCount !== this.lastInfoActionCount) {
-      // Selection changed (or its action count changed, e.g. Repair
-      // appearing/disappearing) — rebuild the DOM once.
+    if (info.key !== this.lastInfoKeyRef) {
+      // Selection changed — rebuild the panel and reset the command grid
+      // back to its root page (AoE2 drops you out of Build sub-pages when
+      // you select something else).
       this.lastInfoKeyRef = info.key;
-      this.lastInfoActionCount = actionCount;
+      this.commandPath = [];
       this.renderSelectionSkeleton(info);
+      this.rootCommands = info.commands ?? [];
+      this.renderCommandGrid();
     } else {
       // Same selection refreshed this frame — update values in place so
       // the button/HP nodes stay alive (preserves :hover/:active, and
       // avoids needless DOM churn 60x/sec).
       this.updateSelectionDynamic(info);
+      this.rootCommands = info.commands ?? [];
+      this.updateCommandGridDynamic();
     }
   }
 
@@ -346,41 +316,45 @@ export class Hud {
   private showDefaultSelectionInfo() {
     if (this.lastInfoKeyRef === null) return; // already blank
     this.lastInfoKeyRef = null;
-    this.lastInfoActionCount = -1;
     this.infoEl.innerHTML = "";
     this.infoEl.classList.add("empty");
     this.hpFillEl = null;
     this.hpTextEl = null;
-    this.actionButtonEls = [];
+    this.rootCommands = [];
+    this.commandPath = [];
+    this.renderCommandGrid();
   }
 
   private renderSelectionSkeleton(info: SelectionInfo) {
     const statsRows = (info.stats ?? [])
-      .map(([label, value]) => `<span>${label}</span><span>${value}</span>`)
+      .map(
+        ([label, value]) =>
+          `<div class="stat-row"><span>${label}</span><span>${value}</span></div>`,
+      )
       .join("");
     const hasHp = info.hp !== undefined && info.maxHp !== undefined;
     const hpBlock = hasHp
       ? `
-        <div class="hp-row"><span>HP</span><span class="hp-text"></span></div>
         <div class="hp-track"><div class="hp-fill"></div></div>
+        <div class="hp-text"></div>
       `
       : "";
-    const actionButtons = this.currentSelectionActions
-      .map((a, i) => `<button class="info-action" data-i="${i}">${a.label}</button>`)
-      .join("");
 
     this.infoEl.classList.remove("empty");
     this.infoEl.innerHTML = `
-      <h2>${info.title}<button class="menu-close">✕</button></h2>
+      <div class="info-name">${info.title}<button class="menu-close">✕</button></div>
+      <div class="info-body">
+        <div class="portrait">${info.portrait ?? "❔"}</div>
+        <div class="info-stats">
+          ${hpBlock}
+          ${statsRows}
+        </div>
+      </div>
       <div class="desc">${info.description}</div>
-      ${hpBlock}
-      ${statsRows ? `<div class="stats">${statsRows}</div>` : ""}
-      ${actionButtons ? `<div class="info-actions">${actionButtons}</div>` : ""}
     `;
 
     this.hpFillEl = this.infoEl.querySelector(".hp-fill");
     this.hpTextEl = this.infoEl.querySelector(".hp-text");
-    this.actionButtonEls = [...this.infoEl.querySelectorAll<HTMLButtonElement>(".info-action")];
     this.updateSelectionDynamic(info);
   }
 
@@ -390,13 +364,72 @@ export class Hud {
       const hpColor = pct > 50 ? "#3fae54" : pct > 25 ? "#d4a72c" : "#c0392b";
       this.hpFillEl.style.width = `${pct}%`;
       this.hpFillEl.style.background = hpColor;
-      this.hpTextEl.textContent = `${Math.ceil(info.hp)}/${info.maxHp}`;
+      this.hpTextEl.textContent = `${Math.ceil(info.hp)} / ${info.maxHp}`;
     }
-    this.actionButtonEls.forEach((btn, i) => {
-      const action = this.currentSelectionActions[i];
-      if (!action) return;
-      if (btn.textContent !== action.label) btn.textContent = action.label;
-      if (btn.disabled !== action.disabled) btn.disabled = action.disabled;
+  }
+
+  /** Resolves the command list for the page the player has drilled into. */
+  private resolveCurrentPage(): CommandButton[] {
+    let page = this.rootCommands;
+    for (const idx of this.commandPath) {
+      const next = page[idx]?.children;
+      if (!next) return page;
+      page = next;
+    }
+    return page;
+  }
+
+  /** Draws the fixed-slot command grid. Empty slots render as recessed
+   * frames so the grid keeps a constant footprint regardless of how many
+   * commands the current selection offers — same as AoE2. */
+  private renderCommandGrid() {
+    this.currentPageCommands = this.resolveCurrentPage();
+    const cells: string[] = this.currentPageCommands.map(
+      (cmd, i) => `
+        <button class="cmd-btn" data-i="${i}" title="${cmd.tooltip ?? cmd.label}">
+          <span class="cmd-icon">${cmd.icon}</span>
+          <span class="cmd-name">${cmd.label}</span>
+          ${cmd.sub ? `<span class="cmd-sub">${cmd.sub}</span>` : ""}
+        </button>
+      `,
+    );
+
+    if (this.commandPath.length > 0) {
+      cells.push(`
+        <button class="cmd-btn cmd-back" title="Back (Esc)">
+          <span class="cmd-icon">↩</span>
+          <span class="cmd-name">Back</span>
+        </button>
+      `);
+    }
+
+    while (cells.length < COMMAND_SLOTS) cells.push(`<div class="cmd-slot-empty"></div>`);
+
+    this.cmdGridEl.innerHTML = cells.join("");
+    this.cmdButtonEls = [...this.cmdGridEl.querySelectorAll<HTMLButtonElement>(".cmd-btn")];
+    this.updateCommandGridDynamic();
+  }
+
+  private updateCommandGridDynamic() {
+    const page = this.resolveCurrentPage();
+    // Structure changed under us (e.g. an action appeared/disappeared) —
+    // rebuild rather than trying to patch mismatched slots.
+    if (page.length !== this.currentPageCommands.length) {
+      this.renderCommandGrid();
+      return;
+    }
+    this.currentPageCommands = page;
+    page.forEach((cmd, i) => {
+      const btn = this.cmdButtonEls[i];
+      if (!btn) return;
+      const disabled = cmd.disabled ?? false;
+      if (btn.disabled !== disabled) btn.disabled = disabled;
+      const sub = btn.querySelector(".cmd-sub");
+      if (sub && cmd.sub !== undefined && sub.textContent !== cmd.sub) {
+        sub.textContent = cmd.sub;
+      }
+      const name = btn.querySelector(".cmd-name");
+      if (name && name.textContent !== cmd.label) name.textContent = cmd.label;
     });
   }
 
@@ -458,81 +491,4 @@ export class Hud {
     this.settingsMenuEl.hidden = !this.settingsMenuOpen;
   }
 
-  /** Switches the shared command panel between the default quick-buttons
-   * and an inline Craft or Build grid — clicking the same mode again (or
-   * ✕/Esc) returns to default. Nothing here is a floating popup, so
-   * nothing shifts the info panel or minimap next to it. */
-  toggleCommandsMode(mode: "craft" | "build") {
-    if (this.commandsMode === mode) {
-      this.showCommandsDefault();
-      return;
-    }
-    this.commandsMode = mode;
-    this.commandsDefaultEl.hidden = true;
-    this.commandsPanelEl.hidden = false;
-    if (mode === "craft") this.renderCraftPanel();
-    else this.renderBuildPanel();
-  }
-
-  showCommandsDefault() {
-    this.commandsMode = "default";
-    this.commandsDefaultEl.hidden = false;
-    this.commandsPanelEl.hidden = true;
-  }
-
-  private renderCraftPanel() {
-    const items = RECIPES.map((recipe) => {
-      const owned = this.crafting.countOf(recipe.id);
-      const maxedOut = recipe.maxOwned !== undefined && owned >= recipe.maxOwned;
-      const canCraft = this.crafting.canCraft(recipe);
-      const costText = Object.entries(recipe.cost)
-        .map(([type, amt]) => `${amt}${RESOURCE_ICON[type as ResourceType]}`)
-        .join(" ");
-      const costLine = maxedOut ? "Owned" : costText;
-      return `
-        <button class="cmd-btn" data-id="${recipe.id}" ${canCraft ? "" : "disabled"} title="${recipe.name} — ${recipe.description}">
-          <span class="cmd-icon">${RECIPE_ICON[recipe.id] ?? "🛠️"}</span>
-          <span class="cmd-name">${recipe.name}</span>
-          <span class="cmd-cost${!maxedOut && !canCraft ? " insufficient" : ""}">${costLine}</span>
-        </button>
-      `;
-    }).join("");
-
-    this.commandsPanelEl.innerHTML = `
-      <div class="cmd-panel-header"><span>🛠️ Crafting</span><button class="menu-close">✕</button></div>
-      <div class="cmd-grid">${items}</div>
-    `;
-  }
-
-  private renderBuildPanel() {
-    const items = BUILDINGS.filter((b) => !b.hidden)
-      .map((building) => {
-        const costText = Object.entries(building.cost)
-          .map(([type, amt]) => `${amt}${RESOURCE_ICON[type as ResourceType]}`)
-          .join(" ");
-        const owned = this.buildManager.countBuilt(building.id);
-        const maxedOut = building.maxBuilt !== undefined && owned >= building.maxBuilt;
-        const townCenterMissing =
-          building.requiresTownCenter && this.buildManager.countBuilt("town_center") === 0;
-        const canBuild = this.buildManager.canBuild(building);
-
-        let costLine = costText;
-        if (maxedOut) costLine = "Built";
-        else if (townCenterMissing) costLine = "Need TC";
-
-        return `
-          <button class="cmd-btn" data-id="${building.id}" ${canBuild ? "" : "disabled"} title="${building.name} — ${building.description}">
-            <span class="cmd-icon">${BUILDING_ICON[building.id] ?? "🏗️"}</span>
-            <span class="cmd-name">${building.name}</span>
-            <span class="cmd-cost${!maxedOut && !townCenterMissing && !canBuild ? " insufficient" : ""}">${costLine}</span>
-          </button>
-        `;
-      })
-      .join("");
-
-    this.commandsPanelEl.innerHTML = `
-      <div class="cmd-panel-header"><span>🏗️ Build</span><button class="menu-close">✕</button></div>
-      <div class="cmd-grid">${items}</div>
-    `;
-  }
 }

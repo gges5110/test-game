@@ -15,6 +15,12 @@ import type { HealthBar } from "./world/healthBar";
 import { Villager } from "./world/villager";
 import { Soldier, getUnitStats, type UnitKind } from "./world/soldier";
 import { Wolf } from "./world/enemy";
+import {
+  createEnemyCamp,
+  type EnemyCamp,
+  type EnemyGuard,
+  type EnemyBuilding,
+} from "./world/enemyCamp";
 import { Effects } from "./world/effects";
 import { Inventory } from "./systems/inventory";
 import { Crafting, RECIPES } from "./systems/crafting";
@@ -107,6 +113,19 @@ const crafting = new Crafting(inventory, buildManager);
 const hud = new Hud(hudRoot, inventory);
 const townBuildings = new TownBuildings();
 const effects = new Effects(scene);
+
+// A single fixed hostile camp to attack — placed well beyond the resource
+// clusters (which top out ~42 units from spawn) so reaching it feels like an
+// expedition, not something you stumble into while gathering.
+const ENEMY_CAMP_CENTER = new THREE.Vector3(64, 0, 46);
+ENEMY_CAMP_CENTER.y = heightAt(ENEMY_CAMP_CENTER.x, ENEMY_CAMP_CENTER.z);
+const enemyCamp: EnemyCamp = createEnemyCamp(scene, ENEMY_CAMP_CENTER);
+for (const guard of enemyCamp.guards) {
+  guard.onAttack = (_from, to) => {
+    effects.slash(to, guard.model.rotation.y, 0xff8a8a);
+    effects.impact(to, 0xd66a4a);
+  };
+}
 
 function gatherBonus(type: Parameters<typeof crafting.gatherBonus>[0]) {
   return crafting.gatherBonus(type);
@@ -370,6 +389,24 @@ function resolveWolfFromHit(hit: THREE.Object3D): Wolf | null {
   while (obj) {
     const match = wolves.find((w) => w.model === obj);
     if (match) return match;
+    obj = obj.parent;
+  }
+  return null;
+}
+
+function resolveEnemyGuardFromHit(hit: THREE.Object3D): EnemyGuard | null {
+  let obj: THREE.Object3D | null = hit;
+  while (obj) {
+    if (obj.userData.enemyGuard) return obj.userData.enemyGuard as EnemyGuard;
+    obj = obj.parent;
+  }
+  return null;
+}
+
+function resolveEnemyBuildingFromHit(hit: THREE.Object3D): EnemyBuilding | null {
+  let obj: THREE.Object3D | null = hit;
+  while (obj) {
+    if (obj.userData.enemyBuilding) return obj.userData.enemyBuilding as EnemyBuilding;
     obj = obj.parent;
   }
   return null;
@@ -770,6 +807,33 @@ function commandSelectedUnits(sx: number, sy: number) {
         return;
       }
     }
+
+    // Same for the enemy camp: its guards first, then its buildings.
+    const guardHit = rtsCamera.raycastObjects(
+      sx,
+      sy,
+      enemyCamp.guards.filter((g) => g.alive).map((g) => g.model),
+    );
+    if (guardHit) {
+      const guard = resolveEnemyGuardFromHit(guardHit);
+      if (guard) {
+        for (const s of selectedSoldiers) s.commandAttack(guard);
+        return;
+      }
+    }
+
+    const enemyBuildingHit = rtsCamera.raycastObjects(
+      sx,
+      sy,
+      enemyCamp.buildings.filter((b) => b.alive).map((b) => b.model),
+    );
+    if (enemyBuildingHit) {
+      const building = resolveEnemyBuildingFromHit(enemyBuildingHit);
+      if (building) {
+        for (const s of selectedSoldiers) s.commandAttack(building);
+        return;
+      }
+    }
   }
 
   // Right-clicking an unfinished building sends villagers to work on it —
@@ -1033,7 +1097,8 @@ function animate() {
   effects.update(delta);
   resources.update();
   for (const villager of villagers) villager.update(delta, time);
-  for (const soldier of soldiers) soldier.update(delta, time, wolves);
+  const combatTargets = [...wolves, ...enemyCamp.guards, ...enemyCamp.buildings];
+  for (const soldier of soldiers) soldier.update(delta, time, combatTargets);
   soldiers = soldiers.filter((s) => {
     if (!s.alive) {
       s.dispose(scene);
@@ -1041,6 +1106,43 @@ function animate() {
         selectedSoldiers = selectedSoldiers.filter((sel) => sel !== s);
         syncSelectionOutline();
       }
+      return false;
+    }
+    return true;
+  });
+
+  for (const guard of enemyCamp.guards) guard.update(delta, time, soldiers);
+  enemyCamp.guards = enemyCamp.guards.filter((g) => {
+    if (!g.alive) {
+      g.dispose(scene);
+      return false;
+    }
+    return true;
+  });
+
+  for (const building of enemyCamp.buildings) {
+    if (!building.alive || !building.attack || time < building.attackReadyAt) continue;
+    const { range, damage, cooldown } = building.attack;
+    const target = soldiers.find(
+      (s) => s.alive && s.model.position.distanceTo(building.position) <= range,
+    );
+    if (target) {
+      target.takeDamage(damage);
+      building.attackReadyAt = time + cooldown;
+      effects.fireArrow(
+        building.position.clone().add(new THREE.Vector3(0, 2.2, 0)),
+        target.model.position.clone().add(new THREE.Vector3(0, 0.4, 0)),
+      );
+    }
+  }
+  enemyCamp.buildings = enemyCamp.buildings.filter((b) => {
+    if (!b.alive) {
+      scene.remove(b.model);
+      disposeBuildingMesh(b.model);
+      for (const [type, amount] of Object.entries(b.loot) as [ResourceType, number][]) {
+        inventory.add(type, amount);
+      }
+      effects.impact(b.position.clone().add(new THREE.Vector3(0, 1, 0)), 0xffaa33);
       return false;
     }
     return true;
@@ -1132,6 +1234,12 @@ function animate() {
   for (const w of wolves) {
     minimapPoints.push({ x: w.model.position.x, z: w.model.position.z, color: "#e05a5a", size: 3 });
   }
+  for (const b of enemyCamp.buildings) {
+    minimapPoints.push({ x: b.position.x, z: b.position.z, color: "#7a2a2a", size: 6 });
+  }
+  for (const g of enemyCamp.guards) {
+    minimapPoints.push({ x: g.model.position.x, z: g.model.position.z, color: "#c23b3b", size: 3 });
+  }
   hud.updateMinimap(
     minimapPoints,
     WORLD_SIZE,
@@ -1193,6 +1301,9 @@ window.__game = {
   get wave() {
     return { waveNumber, nextWaveAt, now: clock.getElapsedTime() };
   },
+  get enemyCamp() {
+    return enemyCamp;
+  },
   /** Compact, JSON-safe snapshot that's cheap to log and easy to assert on. */
   summary() {
     return {
@@ -1201,6 +1312,10 @@ window.__game = {
       villagers: villagers.length,
       soldiers: soldiers.length,
       wolves: wolves.filter((w) => w.alive).length,
+      enemyCamp: {
+        buildingsLeft: enemyCamp.buildings.length,
+        guardsLeft: enemyCamp.guards.length,
+      },
       selected: {
         villagers: selectedVillagers.length,
         soldiers: selectedSoldiers.length,

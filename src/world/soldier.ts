@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { heightAt } from "./terrain";
-import type { Wolf } from "./enemy";
+import type { Combatant } from "./combatant";
 import { createHealthBar, type HealthBar } from "./healthBar";
 
 export type UnitKind = "soldier" | "archer" | "scout";
@@ -61,7 +61,8 @@ const ATTACK_ANIM_TIME = 0.35;
 const RANGED_THRESHOLD = 2;
 
 /** An autonomous defender trained by Barracks/Archery Range/Stable: patrols
- * near home and engages any wolf within leash range — no player commands. */
+ * near home and engages any wolf (or, once ordered/moved near one, an enemy
+ * camp's guards and buildings) within leash range. */
 export class Soldier {
   readonly model: THREE.Group;
   readonly kind: UnitKind;
@@ -85,7 +86,7 @@ export class Soldier {
   /** Player-issued move order; cleared on arrival. */
   private moveOrder: THREE.Vector3 | null = null;
   /** Player-issued attack target, chased regardless of leash range. */
-  private orderedTarget: Wolf | null = null;
+  private orderedTarget: Combatant | null = null;
 
   constructor(scene: THREE.Scene, home: THREE.Vector3, kind: UnitKind = "soldier") {
     this.kind = kind;
@@ -128,17 +129,17 @@ export class Soldier {
     this.wanderTarget.copy(point);
   }
 
-  /** Player-issued: hunt a specific wolf, ignoring the usual leash. */
-  commandAttack(wolf: Wolf) {
+  /** Player-issued: hunt a specific target, ignoring the usual leash. */
+  commandAttack(target: Combatant) {
     this.moveOrder = null;
-    this.orderedTarget = wolf;
+    this.orderedTarget = target;
   }
 
   get isRanged(): boolean {
     return this.stats.attackRange > RANGED_THRESHOLD;
   }
 
-  update(delta: number, now: number, wolves: Wolf[]) {
+  update(delta: number, now: number, targets: Combatant[]) {
     if (!this.alive) return;
     this.updateAttackAnim(delta);
 
@@ -153,7 +154,7 @@ export class Soldier {
     }
 
     if (this.orderedTarget && !this.orderedTarget.alive) this.orderedTarget = null;
-    const target = this.orderedTarget ?? this.findTarget(wolves);
+    const target = this.orderedTarget ?? this.findTarget(targets);
     if (target) {
       const dist = this.model.position.distanceTo(target.model.position);
       if (dist > this.stats.attackRange) {
@@ -203,16 +204,16 @@ export class Soldier {
     scene.remove(this.healthBar.group);
   }
 
-  private findTarget(wolves: Wolf[]): Wolf | null {
-    let nearest: Wolf | null = null;
+  private findTarget(targets: Combatant[]): Combatant | null {
+    let nearest: Combatant | null = null;
     let nearestDist = Infinity;
-    for (const wolf of wolves) {
-      if (!wolf.alive) continue;
-      if (this.home.distanceTo(wolf.model.position) > this.stats.leashRange) continue;
-      const dist = this.model.position.distanceTo(wolf.model.position);
+    for (const candidate of targets) {
+      if (!candidate.alive) continue;
+      if (this.home.distanceTo(candidate.model.position) > this.stats.leashRange) continue;
+      const dist = this.model.position.distanceTo(candidate.model.position);
       if (dist < nearestDist) {
         nearestDist = dist;
-        nearest = wolf;
+        nearest = candidate;
       }
     }
     return nearest;

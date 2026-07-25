@@ -1,4 +1,5 @@
 import type { ResourceType } from "../world/resources";
+import type { UnitKind } from "../world/soldier";
 
 const STORAGE_KEY = "explore-craft-save-v1";
 
@@ -21,12 +22,12 @@ export interface SavedSoldier {
   z: number;
   homeX: number;
   homeZ: number;
+  kind: UnitKind;
 }
 
 export interface SaveData {
   version: 1;
   inventory: Partial<Record<ResourceType, number>>;
-  capacityBonus: number;
   built: Record<string, number>;
   crafted: Record<string, number>;
   buildings: SavedBuilding[];

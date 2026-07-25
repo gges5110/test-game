@@ -17,22 +17,38 @@ export interface SelectionInfo {
   stats?: [string, string][];
 }
 
+// Trades sell 5 of one resource for 2 of another — a lossy exchange rate,
+// same spirit as the Market's fee in Age of Empires II.
+export const TRADE_GIVE = 5;
+export const TRADE_GET = 2;
+const TRADE_PAIRS: [ResourceType, ResourceType][] = [
+  ["wood", "stone"],
+  ["stone", "wood"],
+  ["wood", "food"],
+  ["food", "wood"],
+  ["stone", "food"],
+  ["food", "stone"],
+];
+
 export class Hud {
   private inventoryEl: HTMLElement;
   private townStatsEl: HTMLElement;
   private promptEl: HTMLElement;
   private craftMenuEl: HTMLElement;
   private buildMenuEl: HTMLElement;
+  private tradeMenuEl: HTMLElement;
   private placementButtonsEl: HTMLElement;
   private selectBoxEl: HTMLElement;
   private infoEl: HTMLElement;
   private craftMenuOpen = false;
   private buildMenuOpen = false;
+  private tradeMenuOpen = false;
   private onSelectBuilding: (building: BuildingDef) => void = () => {};
   private onConfirmPlacement: () => void = () => {};
   private onCancelPlacement: () => void = () => {};
   private onReset: () => void = () => {};
   private onCloseInfo: () => void = () => {};
+  private onTrade: (give: ResourceType, get: ResourceType) => void = () => {};
 
   constructor(
     root: HTMLElement,
@@ -48,6 +64,7 @@ export class Hud {
       <div class="quick-buttons">
         <button class="qbtn" id="craftBtn" title="Crafting (C)">🛠️</button>
         <button class="qbtn" id="buildBtn" title="Build (B)">🏗️</button>
+        <button class="qbtn" id="tradeBtn" title="Trade (M)">💱</button>
         <button class="qbtn" id="resetBtn" title="Reset Town">🔄</button>
       </div>
       <div class="placement-buttons" hidden>
@@ -56,6 +73,7 @@ export class Hud {
       </div>
       <div class="craft-menu" hidden></div>
       <div class="craft-menu" id="buildMenu" hidden></div>
+      <div class="craft-menu" id="tradeMenu" hidden></div>
       <div class="select-box" hidden></div>
       <div class="building-info" hidden></div>
     `;
@@ -64,6 +82,7 @@ export class Hud {
     this.promptEl = root.querySelector(".prompt")!;
     this.craftMenuEl = root.querySelector(".craft-menu")!;
     this.buildMenuEl = root.querySelector("#buildMenu")!;
+    this.tradeMenuEl = root.querySelector("#tradeMenu")!;
     this.placementButtonsEl = root.querySelector(".placement-buttons")!;
     this.selectBoxEl = root.querySelector(".select-box")!;
     this.infoEl = root.querySelector(".building-info")!;
@@ -73,18 +92,30 @@ export class Hud {
       // Re-render open menus so Craft/Place buttons reflect newly available resources.
       if (this.craftMenuOpen) this.renderCraftMenu();
       if (this.buildMenuOpen) this.renderBuildMenu();
+      if (this.tradeMenuOpen) this.renderTradeMenu();
     });
     this.renderInventory();
 
     root.querySelector("#craftBtn")!.addEventListener("click", () => {
       this.buildMenuOpen = false;
       this.buildMenuEl.hidden = true;
+      this.tradeMenuOpen = false;
+      this.tradeMenuEl.hidden = true;
       this.toggleCraftMenu();
     });
     root.querySelector("#buildBtn")!.addEventListener("click", () => {
       this.craftMenuOpen = false;
       this.craftMenuEl.hidden = true;
+      this.tradeMenuOpen = false;
+      this.tradeMenuEl.hidden = true;
       this.toggleBuildMenu();
+    });
+    root.querySelector("#tradeBtn")!.addEventListener("click", () => {
+      this.craftMenuOpen = false;
+      this.craftMenuEl.hidden = true;
+      this.buildMenuOpen = false;
+      this.buildMenuEl.hidden = true;
+      this.toggleTradeMenu();
     });
     this.placementButtonsEl
       .querySelector(".pbtn-confirm")!
@@ -99,7 +130,7 @@ export class Hud {
     });
 
     document.addEventListener("pointerdown", (e) => {
-      if (!(this.craftMenuOpen || this.buildMenuOpen)) return;
+      if (!(this.craftMenuOpen || this.buildMenuOpen || this.tradeMenuOpen)) return;
       const target = e.target as HTMLElement;
       if (target.closest(".qbtn") || target.closest(".craft-menu")) return;
       this.closeMenus();
@@ -109,15 +140,25 @@ export class Hud {
       if (e.code === "KeyC") {
         this.buildMenuOpen = false;
         this.buildMenuEl.hidden = true;
+        this.tradeMenuOpen = false;
+        this.tradeMenuEl.hidden = true;
         this.toggleCraftMenu();
       } else if (e.code === "KeyB") {
         this.craftMenuOpen = false;
         this.craftMenuEl.hidden = true;
+        this.tradeMenuOpen = false;
+        this.tradeMenuEl.hidden = true;
         this.toggleBuildMenu();
+      } else if (e.code === "KeyM") {
+        this.craftMenuOpen = false;
+        this.craftMenuEl.hidden = true;
+        this.buildMenuOpen = false;
+        this.buildMenuEl.hidden = true;
+        this.toggleTradeMenu();
       } else if (e.code === "Enter") {
         this.onConfirmPlacement();
       } else if (e.code === "Escape") {
-        if (this.craftMenuOpen || this.buildMenuOpen) {
+        if (this.craftMenuOpen || this.buildMenuOpen || this.tradeMenuOpen) {
           this.closeMenus();
         } else {
           this.onCancelPlacement();
@@ -149,6 +190,10 @@ export class Hud {
 
   setOnCloseInfo(handler: () => void) {
     this.onCloseInfo = handler;
+  }
+
+  setOnTrade(handler: (give: ResourceType, get: ResourceType) => void) {
+    this.onTrade = handler;
   }
 
   setSelectionInfo(info: SelectionInfo | null) {
@@ -231,11 +276,19 @@ export class Hud {
     if (this.buildMenuOpen) this.renderBuildMenu();
   }
 
+  toggleTradeMenu() {
+    this.tradeMenuOpen = !this.tradeMenuOpen;
+    this.tradeMenuEl.hidden = !this.tradeMenuOpen;
+    if (this.tradeMenuOpen) this.renderTradeMenu();
+  }
+
   closeMenus() {
     this.craftMenuOpen = false;
     this.craftMenuEl.hidden = true;
     this.buildMenuOpen = false;
     this.buildMenuEl.hidden = true;
+    this.tradeMenuOpen = false;
+    this.tradeMenuEl.hidden = true;
   }
 
   private renderCraftMenu() {
@@ -302,6 +355,38 @@ export class Hud {
           this.onSelectBuilding(building);
           this.buildMenuOpen = false;
           this.buildMenuEl.hidden = true;
+        }
+      });
+    });
+  }
+
+  private renderTradeMenu() {
+    const hasMarket = this.buildManager.countBuilt("market") > 0;
+    if (!hasMarket) {
+      this.tradeMenuEl.innerHTML = `<h2>Trade <button class="menu-close">✕</button></h2>
+        <div class="recipe"><span>Build a Market to unlock trading resources with each other.</span></div>`;
+      this.tradeMenuEl.querySelector(".menu-close")!.addEventListener("click", () => this.toggleTradeMenu());
+      return;
+    }
+
+    const rows = TRADE_PAIRS.map(([give, get], i) => {
+      const canTrade = this.inventory.has(give, TRADE_GIVE);
+      return `
+        <div class="recipe">
+          <span>${TRADE_GIVE} ${RESOURCE_LABEL[give]} → ${TRADE_GET} ${RESOURCE_LABEL[get]}</span>
+          <button data-i="${i}" ${canTrade ? "" : "disabled"}>Trade</button>
+        </div>
+      `;
+    }).join("");
+
+    this.tradeMenuEl.innerHTML = `<h2>Trade <button class="menu-close">✕</button></h2>${rows}`;
+    this.tradeMenuEl.querySelector(".menu-close")!.addEventListener("click", () => this.toggleTradeMenu());
+    this.tradeMenuEl.querySelectorAll<HTMLButtonElement>(".recipe button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pair = TRADE_PAIRS[Number(btn.dataset.i)];
+        if (pair) {
+          this.onTrade(pair[0], pair[1]);
+          this.renderTradeMenu();
         }
       });
     });

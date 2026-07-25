@@ -2,7 +2,7 @@ import type { ResourceType } from "../world/resources";
 
 type Listener = () => void;
 
-const BASE_CAPACITY = 20;
+const CAPACITY = 40;
 
 export class Inventory {
   private counts: Record<ResourceType, number> = {
@@ -10,20 +10,14 @@ export class Inventory {
     stone: 0,
     food: 0,
   };
-  private capacityBonus = 0;
   private listeners: Listener[] = [];
 
   get capacity(): number {
-    return BASE_CAPACITY + this.capacityBonus;
+    return CAPACITY;
   }
 
   add(type: ResourceType, amount = 1) {
     this.counts[type] = Math.min(this.counts[type] + amount, this.capacity);
-    this.notify();
-  }
-
-  addCapacity(amount: number) {
-    this.capacityBonus += amount;
     this.notify();
   }
 
@@ -44,14 +38,9 @@ export class Inventory {
     return { ...this.counts };
   }
 
-  getCapacityBonus(): number {
-    return this.capacityBonus;
-  }
-
   /** Replaces all state at once (e.g. restoring a save). */
-  restore(counts: Partial<Record<ResourceType, number>>, capacityBonus: number) {
+  restore(counts: Partial<Record<ResourceType, number>>) {
     this.counts = { wood: 0, stone: 0, food: 0, ...counts };
-    this.capacityBonus = capacityBonus;
     this.notify();
   }
 

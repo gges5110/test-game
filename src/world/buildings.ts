@@ -21,28 +21,6 @@ function createHouseMesh(): THREE.Group {
   return group;
 }
 
-function createStorageMesh(): THREE.Group {
-  const group = new THREE.Group();
-  const baseMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
-  const base = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1, 1.4), baseMat);
-  base.position.y = 0.5;
-  base.castShadow = true;
-  group.add(base);
-
-  const barrelMat = new THREE.MeshStandardMaterial({ color: 0x8a6238 });
-  for (const dx of [-0.5, 0.5]) {
-    const barrel = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.25, 0.25, 0.7, 8),
-      barrelMat,
-    );
-    barrel.position.set(dx, 1.35, 0);
-    barrel.castShadow = true;
-    group.add(barrel);
-  }
-
-  return group;
-}
-
 function createTownCenterMesh(): THREE.Group {
   const group = new THREE.Group();
   const stoneMat = new THREE.MeshStandardMaterial({ color: 0xb0a898 });
@@ -127,49 +105,6 @@ function createBlacksmithMesh(): THREE.Group {
   return group;
 }
 
-function createWallMesh(): THREE.Group {
-  const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: 0x9a9086, flatShading: true });
-  const segment = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.2, 0.3), mat);
-  segment.position.y = 0.6;
-  segment.castShadow = true;
-  group.add(segment);
-  return group;
-}
-
-function createTowerMesh(): THREE.Group {
-  const group = new THREE.Group();
-  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x9a9086 });
-
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 2.6, 8), stoneMat);
-  shaft.position.y = 1.3;
-  shaft.castShadow = true;
-  shaft.receiveShadow = true;
-  group.add(shaft);
-
-  const crownMat = new THREE.MeshStandardMaterial({ color: 0x7a746a });
-  for (let i = 0; i < 8; i++) {
-    const angle = (i / 8) * Math.PI * 2;
-    const battlement = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.3, 0.25), crownMat);
-    battlement.position.set(Math.cos(angle) * 0.72, 2.75, Math.sin(angle) * 0.72);
-    battlement.castShadow = true;
-    group.add(battlement);
-  }
-
-  const lantern = new THREE.Mesh(
-    new THREE.SphereGeometry(0.2, 8, 8),
-    new THREE.MeshStandardMaterial({
-      color: 0xffcc66,
-      emissive: 0xff9922,
-      emissiveIntensity: 1.2,
-    }),
-  );
-  lantern.position.y = 2.9;
-  group.add(lantern);
-
-  return group;
-}
-
 function createBarracksMesh(): THREE.Group {
   const group = new THREE.Group();
   const wallMat = new THREE.MeshStandardMaterial({ color: 0x8a7458 });
@@ -204,104 +139,295 @@ function createBarracksMesh(): THREE.Group {
   return group;
 }
 
-function createBallistaMesh(): THREE.Group {
+function createMillMesh(): THREE.Group {
   const group = new THREE.Group();
-  const woodMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
-  const ironMat = new THREE.MeshStandardMaterial({ color: 0x3a3a3a, flatShading: true });
-
-  const platform = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.1, 0.5, 8), woodMat);
-  platform.position.y = 0.25;
-  platform.castShadow = true;
-  platform.receiveShadow = true;
-  group.add(platform);
-
-  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 1.1, 6), woodMat);
-  post.position.y = 1.05;
-  post.castShadow = true;
-  group.add(post);
-
-  const arm = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.12, 0.12), ironMat);
-  arm.position.y = 1.6;
-  arm.rotation.y = Math.PI / 5;
-  arm.castShadow = true;
-  group.add(arm);
-
-  const bolt = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.9, 6), ironMat);
-  bolt.rotation.z = -Math.PI / 2;
-  bolt.rotation.y = Math.PI / 5;
-  bolt.position.set(Math.sin(Math.PI / 5) * 0.5, 1.6, Math.cos(Math.PI / 5) * 0.5);
-  group.add(bolt);
-
-  return group;
-}
-
-function createSpikeTrapMesh(): THREE.Group {
-  const group = new THREE.Group();
-  const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.75, 0.8, 0.12, 8),
-    new THREE.MeshStandardMaterial({ color: 0x5a4530 }),
-  );
-  base.position.y = 0.06;
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a });
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.0, 1.4, 8), woodMat);
+  base.position.y = 0.7;
+  base.castShadow = true;
   base.receiveShadow = true;
   group.add(base);
 
-  const spikeMat = new THREE.MeshStandardMaterial({ color: 0x8a8378, flatShading: true });
-  for (let i = 0; i < 6; i++) {
-    const angle = (i / 6) * Math.PI * 2;
-    const r = i % 2 === 0 ? 0.45 : 0.2;
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.4, 5), spikeMat);
-    spike.position.set(Math.cos(angle) * r, 0.2, Math.sin(angle) * r);
-    spike.castShadow = true;
-    group.add(spike);
+  const hub = new THREE.Mesh(
+    new THREE.SphereGeometry(0.18, 8, 8),
+    new THREE.MeshStandardMaterial({ color: 0x3a3025 }),
+  );
+  hub.position.set(0, 1.7, 0.85);
+  group.add(hub);
+
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0xd9c19a, flatShading: true });
+  for (let i = 0; i < 4; i++) {
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.1, 0.06), bladeMat);
+    blade.position.copy(hub.position);
+    blade.rotation.z = (i / 4) * Math.PI * 2;
+    blade.translateY(0.55);
+    blade.castShadow = true;
+    group.add(blade);
   }
 
   return group;
 }
 
-function createCampfireMesh(): THREE.Group {
+function createLumberCampMesh(): THREE.Group {
   const group = new THREE.Group();
-  const logMat = new THREE.MeshStandardMaterial({ color: 0x4a3323 });
+  const platformMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.15, 1.6), platformMat);
+  platform.position.y = 0.08;
+  platform.receiveShadow = true;
+  group.add(platform);
+
+  const logMat = new THREE.MeshStandardMaterial({ color: 0x5c4326 });
   for (let i = 0; i < 4; i++) {
-    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.9, 5), logMat);
+    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1.4, 8), logMat);
     log.rotation.z = Math.PI / 2;
-    log.rotation.y = (i / 4) * Math.PI * 2;
-    log.position.y = 0.12;
+    log.position.set(0, 0.3 + i * 0.28, -0.1);
     log.castShadow = true;
     group.add(log);
   }
 
-  const flame = new THREE.Mesh(
-    new THREE.ConeGeometry(0.18, 0.5, 8),
-    new THREE.MeshStandardMaterial({
-      color: 0xff8c30,
-      emissive: 0xff5500,
-      emissiveIntensity: 1.5,
-    }),
+  return group;
+}
+
+function createMiningCampMesh(): THREE.Group {
+  const group = new THREE.Group();
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
+  for (const dx of [-0.7, 0.7]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.3, 6), postMat);
+    post.position.set(dx, 0.65, -0.6);
+    post.castShadow = true;
+    group.add(post);
+  }
+  const canopy = new THREE.Mesh(
+    new THREE.BoxGeometry(1.8, 0.1, 1.0),
+    new THREE.MeshStandardMaterial({ color: 0x9a4a3a }),
   );
-  flame.position.y = 0.4;
-  group.add(flame);
+  canopy.position.set(0, 1.3, -0.6);
+  canopy.rotation.x = -0.15;
+  canopy.castShadow = true;
+  group.add(canopy);
 
-  const light = new THREE.PointLight(0xff9a4a, 3.5, 12, 2);
-  light.position.y = 0.6;
-  group.add(light);
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a8378, flatShading: true });
+  const rockSpots: [number, number, number][] = [
+    [0, 0.2, 0.4],
+    [0.4, 0.16, 0.6],
+    [-0.35, 0.18, 0.5],
+  ];
+  for (const [x, y, z] of rockSpots) {
+    const rock = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.32, 0.4), rockMat);
+    rock.position.set(x, y, z);
+    rock.rotation.set(0.3, 0.6, 0.1);
+    rock.castShadow = true;
+    group.add(rock);
+  }
 
-  group.userData.flame = flame;
-  group.userData.light = light;
+  return group;
+}
+
+function createArcheryRangeMesh(): THREE.Group {
+  const group = new THREE.Group();
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x8a7458 });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x3e6b3f });
+
+  const walls = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.4, 1.8), wallMat);
+  walls.position.y = 0.7;
+  walls.castShadow = true;
+  walls.receiveShadow = true;
+  group.add(walls);
+
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.3, 2.0), roofMat);
+  roof.position.y = 1.55;
+  roof.castShadow = true;
+  group.add(roof);
+
+  const targetMat = new THREE.MeshStandardMaterial({ color: 0xd6335c });
+  const target = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.08, 16), targetMat);
+  target.rotation.z = Math.PI / 2;
+  target.position.set(0, 1.0, 0.95);
+  group.add(target);
+  const ring = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.2, 0.2, 0.09, 16),
+    new THREE.MeshStandardMaterial({ color: 0xf2e6c8 }),
+  );
+  ring.rotation.z = Math.PI / 2;
+  ring.position.set(0.005, 1.0, 0.95);
+  group.add(ring);
+
+  return group;
+}
+
+function createStableMesh(): THREE.Group {
+  const group = new THREE.Group();
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x9a7a4a });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a });
+
+  const walls = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.2, 2.0), wallMat);
+  walls.position.y = 0.6;
+  walls.castShadow = true;
+  walls.receiveShadow = true;
+  group.add(walls);
+
+  const roof = new THREE.Mesh(new THREE.CylinderGeometry(0, 1.6, 1.0, 4), roofMat);
+  roof.rotation.y = Math.PI / 4;
+  roof.scale.set(1.3, 1, 0.7);
+  roof.position.y = 1.65;
+  roof.castShadow = true;
+  group.add(roof);
+
+  const doorMat = new THREE.MeshStandardMaterial({ color: 0x2a2018 });
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.9, 0.1), doorMat);
+  door.position.set(0, 0.45, 1.02);
+  group.add(door);
+
+  return group;
+}
+
+function createMarketMesh(): THREE.Group {
+  const group = new THREE.Group();
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a });
+  const table = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.7, 1.4), woodMat);
+  table.position.y = 0.35;
+  table.castShadow = true;
+  table.receiveShadow = true;
+  group.add(table);
+
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
+  for (const [dx, dz] of [
+    [-0.85, -0.65],
+    [0.85, -0.65],
+    [-0.85, 0.65],
+    [0.85, 0.65],
+  ]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 6), postMat);
+    post.position.set(dx, 0.8, dz);
+    post.castShadow = true;
+    group.add(post);
+  }
+
+  const canopy = new THREE.Mesh(
+    new THREE.BoxGeometry(2.1, 0.08, 1.7),
+    new THREE.MeshStandardMaterial({ color: 0xc0392b }),
+  );
+  canopy.position.y = 1.6;
+  canopy.castShadow = true;
+  group.add(canopy);
+
+  const goodsColors = [0xd9c19a, 0x8a8378, 0xd6335c];
+  goodsColors.forEach((color, i) => {
+    const goods = new THREE.Mesh(
+      new THREE.BoxGeometry(0.35, 0.3, 0.35),
+      new THREE.MeshStandardMaterial({ color }),
+    );
+    goods.position.set(-0.5 + i * 0.5, 0.85, 0);
+    goods.castShadow = true;
+    group.add(goods);
+  });
+
+  return group;
+}
+
+function createOutpostMesh(): THREE.Group {
+  const group = new THREE.Group();
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.2, 8), woodMat);
+  post.position.y = 1.1;
+  post.castShadow = true;
+  post.receiveShadow = true;
+  group.add(post);
+
+  const platform = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.6, 0.6, 0.15, 8),
+    new THREE.MeshStandardMaterial({ color: 0x8a6a3a }),
+  );
+  platform.position.y = 2.25;
+  platform.castShadow = true;
+  group.add(platform);
+
+  const railMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f });
+  for (let i = 0; i < 6; i++) {
+    const angle = (i / 6) * Math.PI * 2;
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.5, 0.06), railMat);
+    rail.position.set(Math.cos(angle) * 0.55, 2.55, Math.sin(angle) * 0.55);
+    group.add(rail);
+  }
+
+  const lantern = new THREE.Mesh(
+    new THREE.SphereGeometry(0.14, 8, 8),
+    new THREE.MeshStandardMaterial({ color: 0xffcc66, emissive: 0xff9922, emissiveIntensity: 1.2 }),
+  );
+  lantern.position.y = 2.5;
+  group.add(lantern);
+
+  return group;
+}
+
+function createCastleMesh(): THREE.Group {
+  const group = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x9a9086 });
+  const darkStoneMat = new THREE.MeshStandardMaterial({ color: 0x7a746a });
+
+  const keep = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.6, 3.2, 8), stoneMat);
+  keep.position.y = 1.6;
+  keep.castShadow = true;
+  keep.receiveShadow = true;
+  group.add(keep);
+
+  for (let i = 0; i < 10; i++) {
+    const angle = (i / 10) * Math.PI * 2;
+    const battlement = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.35, 0.3), darkStoneMat);
+    battlement.position.set(Math.cos(angle) * 1.42, 3.35, Math.sin(angle) * 1.42);
+    battlement.castShadow = true;
+    group.add(battlement);
+  }
+
+  for (const [dx, dz] of [
+    [-1.6, -1.0],
+    [1.6, -1.0],
+    [-1.6, 1.0],
+    [1.6, 1.0],
+  ]) {
+    const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 2.2, 8), stoneMat);
+    turret.position.set(dx, 1.1, dz);
+    turret.castShadow = true;
+    turret.receiveShadow = true;
+    group.add(turret);
+
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.6, 0.8, 8), darkStoneMat);
+    roof.position.set(dx, 2.6, dz);
+    roof.castShadow = true;
+    group.add(roof);
+  }
+
+  const flagPole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.04, 1.2, 6),
+    new THREE.MeshStandardMaterial({ color: 0x3a3025 }),
+  );
+  flagPole.position.y = 3.8;
+  group.add(flagPole);
+
+  const flag = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.5, 0.35),
+    new THREE.MeshStandardMaterial({ color: 0xc0392b, side: THREE.DoubleSide }),
+  );
+  flag.position.set(0.28, 4.2, 0);
+  group.add(flag);
+
   return group;
 }
 
 export function createBuildingMesh(id: string): THREE.Group {
   if (id === "house") return createHouseMesh();
-  if (id === "storage") return createStorageMesh();
   if (id === "town_center") return createTownCenterMesh();
   if (id === "farm") return createFarmMesh();
+  if (id === "mill") return createMillMesh();
+  if (id === "lumber_camp") return createLumberCampMesh();
+  if (id === "mining_camp") return createMiningCampMesh();
   if (id === "blacksmith") return createBlacksmithMesh();
-  if (id === "tower") return createTowerMesh();
   if (id === "barracks") return createBarracksMesh();
-  if (id === "ballista") return createBallistaMesh();
-  if (id === "spike_trap") return createSpikeTrapMesh();
-  if (id === "campfire") return createCampfireMesh();
-  return createWallMesh();
+  if (id === "archery_range") return createArcheryRangeMesh();
+  if (id === "stable") return createStableMesh();
+  if (id === "market") return createMarketMesh();
+  if (id === "outpost") return createOutpostMesh();
+  return createCastleMesh();
 }
 
 /** Adds a hidden selection ring to a building mesh; toggle `.visible` on it. */

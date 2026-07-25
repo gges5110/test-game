@@ -4,16 +4,16 @@ import { ResourceManager } from "./world/resources";
 import { createBuildingMesh, makeGhost, attachSelectionRing, attachHealthBar } from "./world/buildings";
 import type { HealthBar } from "./world/healthBar";
 import { Villager } from "./world/villager";
-import { Soldier, SOLDIER_STATS } from "./world/soldier";
+import { Soldier, getUnitStats, type UnitKind } from "./world/soldier";
 import { Wolf } from "./world/enemy";
 import { Inventory } from "./systems/inventory";
 import { Crafting } from "./systems/crafting";
-import { BuildManager, getBuildingDef, type BuildingDef } from "./systems/building";
+import { BUILDINGS, BuildManager, getBuildingDef, type BuildingDef } from "./systems/building";
 import { TownBuildings, type PlacedBuilding } from "./systems/townBuildings";
 import { createLighting } from "./systems/lighting";
 import { RtsCamera } from "./systems/rtsCamera";
 import { saveGame, loadGame, clearSave, type SaveData } from "./systems/save";
-import { Hud, type SelectionInfo } from "./ui/hud";
+import { Hud, TRADE_GIVE, TRADE_GET, type SelectionInfo } from "./ui/hud";
 
 const canvas = document.getElementById("view") as HTMLCanvasElement;
 const hudRoot = document.getElementById("hud") as HTMLElement;
@@ -66,23 +66,37 @@ function spawnBuilding(id: string, x: number, z: number, hp?: number): PlacedBui
 
 let villagers: Villager[] = [];
 let soldiers: Soldier[] = [];
-let farms: { building: PlacedBuilding; timer: number }[] = [];
-let barracksList: { building: PlacedBuilding; timer: number }[] = [];
+let producers: { building: PlacedBuilding; timer: number }[] = [];
+let trainers: { building: PlacedBuilding; timer: number }[] = [];
 let waveNumber = 0;
+
+/** Registers a placed building as a passive resource producer or unit
+ * trainer if its def calls for one, wiring cleanup for when it's destroyed. */
+function registerBuildingBehavior(placed: PlacedBuilding) {
+  if (placed.def.produces) {
+    const entry = { building: placed, timer: 0 };
+    producers.push(entry);
+    placed.onDestroyed = () => {
+      producers = producers.filter((e) => e !== entry);
+    };
+  } else if (placed.def.trains) {
+    const entry = { building: placed, timer: 0 };
+    trainers.push(entry);
+    placed.onDestroyed = () => {
+      trainers = trainers.filter((e) => e !== entry);
+    };
+  }
+}
 
 const savedGame = loadGame();
 if (savedGame) {
   // Reload a previous session instead of resetting the town.
   for (const b of savedGame.buildings) {
+    // Skip building types from an older roster that no longer exist,
+    // instead of crashing the whole load.
+    if (!BUILDINGS.some((def) => def.id === b.type)) continue;
     const placed = spawnBuilding(b.type, b.x, b.z, b.hp);
-    if (b.type === "farm") farms.push({ building: placed, timer: 0 });
-    if (b.type === "barracks") {
-      const entry = { building: placed, timer: 0 };
-      barracksList.push(entry);
-      placed.onDestroyed = () => {
-        barracksList = barracksList.filter((e) => e !== entry);
-      };
-    }
+    registerBuildingBehavior(placed);
   }
   for (const v of savedGame.villagers) {
     const villager = new Villager(
@@ -96,7 +110,11 @@ if (savedGame) {
     villagers.push(villager);
   }
   for (const s of savedGame.soldiers ?? []) {
-    const soldier = new Soldier(scene, new THREE.Vector3(s.homeX, heightAt(s.homeX, s.homeZ), s.homeZ));
+    const soldier = new Soldier(
+      scene,
+      new THREE.Vector3(s.homeX, heightAt(s.homeX, s.homeZ), s.homeZ),
+      s.kind,
+    );
     soldier.model.position.set(s.x, heightAt(s.x, s.z), s.z);
     soldiers.push(soldier);
   }
@@ -110,7 +128,7 @@ if (savedGame) {
       selectedVillagers = selectedVillagers.filter((v) => v !== villager);
     };
   }
-  inventory.restore(savedGame.inventory, savedGame.capacityBonus);
+  inventory.restore(savedGame.inventory);
   buildManager.restore(savedGame.built);
   crafting.restore(savedGame.crafted);
   waveNumber = savedGame.waveNumber;
@@ -248,16 +266,17 @@ function buildSelectionInfo(): SelectionInfo | null {
   }
 
   if (selectedSoldier) {
+    const stats = getUnitStats(selectedSoldier.kind);
     return {
-      title: "Soldier",
-      description: "Trained by a Barracks. Patrols near home and auto-attacks any wolf within range.",
+      title: stats.label,
+      description: "Trained by a Barracks/Archery Range/Stable. Patrols near home and auto-attacks any wolf within range.",
       hp: selectedSoldier.hp,
-      maxHp: SOLDIER_STATS.maxHp,
+      maxHp: stats.maxHp,
       stats: [
-        ["Damage", `${SOLDIER_STATS.attackDamage}`],
-        ["Attack range", `${SOLDIER_STATS.attackRange}`],
-        ["Cooldown", `${SOLDIER_STATS.attackCooldown}s`],
-        ["Leash range", `${SOLDIER_STATS.leashRange}`],
+        ["Damage", `${stats.attackDamage}`],
+        ["Attack range", `${stats.attackRange}`],
+        ["Cooldown", `${stats.attackCooldown}s`],
+        ["Leash range", `${stats.leashRange}`],
       ],
     };
   }
@@ -317,20 +336,8 @@ function confirmPlacement() {
       villagers = villagers.filter((v) => v !== villager);
       selectedVillagers = selectedVillagers.filter((v) => v !== villager);
     };
-  } else if (selectedBuildingType.id === "storage") {
-    inventory.addCapacity(20);
-  } else if (selectedBuildingType.id === "farm") {
-    const farmEntry = { building: placed, timer: 0 };
-    farms.push(farmEntry);
-    placed.onDestroyed = () => {
-      farms = farms.filter((f) => f !== farmEntry);
-    };
-  } else if (selectedBuildingType.id === "barracks") {
-    const barracksEntry = { building: placed, timer: 0 };
-    barracksList.push(barracksEntry);
-    placed.onDestroyed = () => {
-      barracksList = barracksList.filter((e) => e !== barracksEntry);
-    };
+  } else {
+    registerBuildingBehavior(placed);
   }
 
   cancelPlacement();
@@ -347,6 +354,11 @@ function handleEscape() {
 hud.setOnConfirmPlacement(confirmPlacement);
 hud.setOnCancelPlacement(handleEscape);
 hud.setOnCloseInfo(deselectAll);
+hud.setOnTrade((give, get) => {
+  if (!inventory.has(give, TRADE_GIVE)) return;
+  inventory.spend(give, TRADE_GIVE);
+  inventory.add(get, TRADE_GET);
+});
 hud.setOnReset(() => {
   clearSave();
   window.location.reload();
@@ -471,12 +483,9 @@ rtsCamera.setOnBoxSelect((rect, final) => {
   }
 });
 
-// Farms tick out food passively over time.
-const FARM_INTERVAL = 8;
-
-// Barracks spend food to train an autonomous soldier defender.
-const BARRACKS_INTERVAL = 14;
-const SOLDIER_FOOD_COST = 4;
+// Barracks/Archery Range/Stable spend food to train an autonomous defender.
+const TRAIN_INTERVAL = 14;
+const TRAIN_FOOD_COST = 4;
 
 const BEAM_DURATION = 0.15;
 
@@ -532,7 +541,6 @@ function collectSaveData(): SaveData {
   return {
     version: 1,
     inventory: inventory.getAll(),
-    capacityBonus: inventory.getCapacityBonus(),
     built: buildManager.getAllBuilt(),
     crafted: crafting.getAllCrafted(),
     buildings: townBuildings.list.map((b) => ({
@@ -552,6 +560,7 @@ function collectSaveData(): SaveData {
       z: s.model.position.z,
       homeX: s.getHome().x,
       homeZ: s.getHome().z,
+      kind: s.kind,
     })),
     waveNumber,
   };
@@ -583,24 +592,25 @@ function animate() {
     return true;
   });
 
-  for (const farm of farms) {
-    farm.timer += delta;
-    if (farm.timer >= FARM_INTERVAL) {
-      farm.timer -= FARM_INTERVAL;
-      inventory.add("food", 1);
+  for (const producer of producers) {
+    const { type, amount, interval } = producer.building.def.produces!;
+    producer.timer += delta;
+    if (producer.timer >= interval) {
+      producer.timer -= interval;
+      inventory.add(type, amount);
     }
   }
 
-  for (const barracks of barracksList) {
-    barracks.timer += delta;
-    if (barracks.timer >= BARRACKS_INTERVAL) {
-      if (inventory.has("food", SOLDIER_FOOD_COST)) {
-        barracks.timer -= BARRACKS_INTERVAL;
-        inventory.spend("food", SOLDIER_FOOD_COST);
-        soldiers.push(new Soldier(scene, barracks.building.position));
+  for (const trainer of trainers) {
+    trainer.timer += delta;
+    if (trainer.timer >= TRAIN_INTERVAL) {
+      if (inventory.has("food", TRAIN_FOOD_COST)) {
+        trainer.timer -= TRAIN_INTERVAL;
+        inventory.spend("food", TRAIN_FOOD_COST);
+        soldiers.push(new Soldier(scene, trainer.building.position, trainer.building.def.trains as UnitKind));
       } else {
         // Not enough food yet — hold at the threshold instead of stalling forever mid-cycle.
-        barracks.timer = BARRACKS_INTERVAL;
+        trainer.timer = TRAIN_INTERVAL;
       }
     }
   }
@@ -609,13 +619,7 @@ function animate() {
     const bar = building.mesh.userData.healthBar as HealthBar | undefined;
     bar?.setFraction(building.hp / building.maxHp);
 
-    if (building.type === "campfire") {
-      const flame = building.mesh.userData.flame as THREE.Mesh;
-      const light = building.mesh.userData.light as THREE.PointLight;
-      const flicker = 0.85 + Math.sin(time * 11) * 0.1 + Math.sin(time * 23) * 0.05;
-      light.intensity = 3.5 * flicker;
-      flame.scale.setScalar(0.9 + Math.sin(time * 17) * 0.08);
-    } else if (building.def.attack && time >= building.attackReadyAt) {
+    if (building.def.attack && time >= building.attackReadyAt) {
       const { range, damage, cooldown } = building.def.attack;
       const target = wolves.find(
         (w) => w.alive && w.model.position.distanceTo(building.position) <= range,

@@ -1,5 +1,6 @@
 import type { Inventory } from "./inventory";
 import type { ResourceType } from "../world/resources";
+import type { UnitKind } from "../world/soldier";
 
 export interface BuildingDef {
   id: string;
@@ -17,8 +18,16 @@ export interface BuildingDef {
   attack?: { range: number; damage: number; cooldown: number };
   /** Height (above the building's base) the attack beam is drawn from. Defaults to 2. */
   attackOriginY?: number;
+  /** If set, this building passively produces a resource over time. */
+  produces?: { type: ResourceType; amount: number; interval: number };
+  /** If set, this building periodically trains an autonomous unit, paid in food. */
+  trains?: UnitKind;
 }
 
+// Building roster and wood/stone cost ratios mirror Age of Empires II: economy
+// buildings (House, Farm, camps, unit producers) cost wood only, while stone
+// is reserved for defense (Outpost, Castle) — so turtling trades off against
+// expansion instead of just gating everything behind the same resource.
 export const BUILDINGS: BuildingDef[] = [
   {
     id: "town_center",
@@ -32,89 +41,112 @@ export const BUILDINGS: BuildingDef[] = [
   {
     id: "house",
     name: "House",
-    cost: { wood: 6, stone: 2 },
+    cost: { wood: 5 },
     description: "Spawns a villager who gathers nearby resources",
     maxHp: 100,
     requiresTownCenter: true,
   },
   {
-    id: "storage",
-    name: "Storage",
-    cost: { wood: 4, stone: 4 },
-    description: "+20 resource capacity",
-    maxHp: 80,
-    requiresTownCenter: true,
-  },
-  {
     id: "farm",
     name: "Farm",
-    cost: { wood: 4, stone: 2 },
+    cost: { wood: 5 },
     description: "+1 food every 8s",
     maxHp: 70,
     requiresTownCenter: true,
+    produces: { type: "food", amount: 1, interval: 8 },
+  },
+  {
+    id: "mill",
+    name: "Mill",
+    cost: { wood: 8 },
+    description: "+1 food every 6s — a sturdier food producer than a Farm",
+    maxHp: 90,
+    requiresTownCenter: true,
+    produces: { type: "food", amount: 1, interval: 6 },
+  },
+  {
+    id: "lumber_camp",
+    name: "Lumber Camp",
+    cost: { wood: 8 },
+    description: "+1 wood every 6s",
+    maxHp: 90,
+    requiresTownCenter: true,
+    produces: { type: "wood", amount: 1, interval: 6 },
+  },
+  {
+    id: "mining_camp",
+    name: "Mining Camp",
+    cost: { wood: 8 },
+    description: "+1 stone every 6s",
+    maxHp: 90,
+    requiresTownCenter: true,
+    produces: { type: "stone", amount: 1, interval: 6 },
   },
   {
     id: "blacksmith",
     name: "Blacksmith",
-    cost: { wood: 5, stone: 6 },
+    cost: { wood: 9 },
     description: "Unlocks Iron Tool (better gather rate)",
     maxHp: 100,
     requiresTownCenter: true,
     maxBuilt: 1,
   },
   {
-    id: "tower",
-    name: "Tower",
-    cost: { wood: 4, stone: 6 },
-    description: "Auto-attacks nearby wolves",
-    maxHp: 120,
-    requiresTownCenter: true,
-    attack: { range: 8, damage: 12, cooldown: 1 },
-    attackOriginY: 2.9,
-  },
-  {
-    id: "ballista",
-    name: "Ballista Tower",
-    cost: { wood: 8, stone: 10 },
-    description: "Long range, heavy damage, slow to fire",
-    maxHp: 150,
-    requiresTownCenter: true,
-    attack: { range: 14, damage: 32, cooldown: 2.4 },
-    attackOriginY: 1.9,
-  },
-  {
-    id: "spike_trap",
-    name: "Spike Trap",
-    cost: { wood: 2, stone: 3 },
-    description: "Cheap, close-range, hits hard — but fragile",
-    maxHp: 20,
-    requiresTownCenter: true,
-    attack: { range: 1.8, damage: 20, cooldown: 0.7 },
-    attackOriginY: 0.3,
-  },
-  {
     id: "barracks",
     name: "Barracks",
-    cost: { wood: 6, stone: 4 },
-    description: "Trains a soldier every so often, paid for in food",
+    cost: { wood: 10 },
+    description: "Trains a Soldier every so often, paid for in food",
     maxHp: 110,
     requiresTownCenter: true,
+    trains: "soldier",
   },
   {
-    id: "wall",
-    name: "Wall",
-    cost: { stone: 3 },
-    description: "Defensive wall segment — blocks and absorbs attacks",
-    maxHp: 150,
+    id: "archery_range",
+    name: "Archery Range",
+    cost: { wood: 10 },
+    description: "Trains an Archer every so often, paid for in food",
+    maxHp: 100,
     requiresTownCenter: true,
+    trains: "archer",
   },
   {
-    id: "campfire",
-    name: "Campfire",
-    cost: { wood: 3, stone: 1 },
-    description: "Light + landmark",
-    maxHp: 40,
+    id: "stable",
+    name: "Stable",
+    cost: { wood: 10 },
+    description: "Trains a Scout every so often, paid for in food",
+    maxHp: 100,
     requiresTownCenter: true,
+    trains: "scout",
+  },
+  {
+    id: "market",
+    name: "Market",
+    cost: { wood: 10 },
+    description: "Unlocks trading resources with each other",
+    maxHp: 100,
+    requiresTownCenter: true,
+    maxBuilt: 1,
+  },
+  {
+    id: "outpost",
+    name: "Outpost",
+    cost: { wood: 3, stone: 2 },
+    description: "Cheap early watchtower — light auto-attack on wolves",
+    maxHp: 60,
+    requiresTownCenter: true,
+    attack: { range: 6, damage: 8, cooldown: 1.3 },
+    attackOriginY: 2.2,
+  },
+  {
+    id: "castle",
+    name: "Castle",
+    cost: { stone: 22 },
+    description: "Your strongest structure — stone-only, huge HP, heavy attack",
+    maxHp: 300,
+    requiresTownCenter: true,
+    maxBuilt: 2,
+    attack: { range: 15, damage: 35, cooldown: 2 },
+    attackOriginY: 3.2,
   },
 ];
 

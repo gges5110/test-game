@@ -2,8 +2,6 @@ import type { ResourceType } from "../world/resources";
 
 type Listener = () => void;
 
-const CAPACITY = 40;
-
 export class Inventory {
   private counts: Record<ResourceType, number> = {
     wood: 0,
@@ -12,12 +10,8 @@ export class Inventory {
   };
   private listeners: Listener[] = [];
 
-  get capacity(): number {
-    return CAPACITY;
-  }
-
   add(type: ResourceType, amount = 1) {
-    this.counts[type] = Math.min(this.counts[type] + amount, this.capacity);
+    this.counts[type] += amount;
     this.notify();
   }
 

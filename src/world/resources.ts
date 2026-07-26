@@ -31,6 +31,13 @@ export interface GatherSource {
   update(): void;
 }
 
+/** Where a villager carrying `type` should walk to drop it off — AoE2's Town
+ * Center / Mill / Lumber Camp / Mining Camp role. TownBuildings satisfies
+ * this structurally via its own nearestDropOff method. */
+export interface DropOffFinder {
+  nearestDropOff(type: ResourceType, from: THREE.Vector3): THREE.Vector3 | null;
+}
+
 const GATHER_RANGE = 2.5;
 const RESPAWN_SECONDS = 20;
 const NODE_COUNT_PER_TYPE = 140;
@@ -318,6 +325,33 @@ export class ResourceManager {
       }
     }
     return nearest;
+  }
+
+  /** Registers a gatherable node with no instanced visuals of its own — used
+   * for Farms, whose "resource" is the building itself. Villagers find,
+   * reserve and deplete it exactly like a wild node; it just has nothing to
+   * hide when depleted (setInstancesVisible no-ops for an unknown node). */
+  addNode(type: ResourceType, position: THREE.Vector3): ResourceNode {
+    const pickMesh = new THREE.Mesh(new THREE.SphereGeometry(PICK_RADIUS[type], 6, 4));
+    pickMesh.position.copy(position);
+    pickMesh.updateMatrixWorld(true);
+    const node: ResourceNode = {
+      type,
+      position: position.clone(),
+      mesh: pickMesh,
+      depleted: false,
+      respawnAt: 0,
+      reserved: false,
+    };
+    pickMesh.userData.resourceNode = node;
+    this.nodes.push(node);
+    return node;
+  }
+
+  /** Un-registers a node added via addNode — e.g. when its Farm is destroyed. */
+  removeNode(node: ResourceNode) {
+    const idx = this.nodes.indexOf(node);
+    if (idx >= 0) this.nodes.splice(idx, 1);
   }
 
   reserve(node: ResourceNode) {

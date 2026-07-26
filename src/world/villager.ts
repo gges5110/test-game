@@ -1,7 +1,13 @@
 import * as THREE from "three";
 import { heightAt } from "./terrain";
-import type { GatherSource, ResourceNode, ResourceType } from "./resources";
+import type { DropOffFinder, GatherSource, ResourceNode, ResourceType } from "./resources";
 import type { Inventory } from "../systems/inventory";
+import type { Combatant } from "./combatant";
+import { createHealthBar, type HealthBar } from "./healthBar";
+
+/** Unarmed — soft compared to a Soldier's lowest (Archer at 40), so a raid
+ * that reaches your economy is genuinely costly, not just cosmetic. */
+export const VILLAGER_MAX_HP = 25;
 
 /** Matches the minimap's resource-node colors, so a carried resource reads
  * as the same "thing" whether you're looking at the node or the villager. */
@@ -34,8 +40,11 @@ export interface ConstructionSite {
   underConstruction: boolean;
 }
 
-export class Villager {
+export class Villager implements Combatant {
   readonly model: THREE.Group;
+  hp = VILLAGER_MAX_HP;
+  alive = true;
+
   private home: THREE.Vector3;
   private wanderTarget: THREE.Vector3;
   private wanderWaitUntil = 0;
@@ -43,17 +52,24 @@ export class Villager {
   private selectionRing: THREE.Mesh;
   private workIndicator: THREE.Mesh;
   private carryIndicator: THREE.Mesh;
+  private healthBar: HealthBar;
 
   private state: State = "idle";
   private targetNode: ResourceNode | null = null;
   private buildSite: ConstructionSite | null = null;
   private gatherEndsAt = 0;
   private carrying: ResourceType | null = null;
+  /** Where a load is being carried to — the nearest valid drop-off for its
+   * type, resolved once on picking it up. Falls back to home if nothing
+   * qualifies (shouldn't happen once a Town Center exists, but keeps a
+   * villager from getting stuck instead of just walking further than ideal). */
+  private dropTarget: THREE.Vector3 | null = null;
 
   constructor(
     scene: THREE.Scene,
     home: THREE.Vector3,
     private resources: GatherSource,
+    private dropOffFinder: DropOffFinder,
     private inventory: Inventory,
     private getGatherBonus: (type: ResourceType) => number,
     private onBuildTick: (site: ConstructionSite, delta: number) => void = () => {},
@@ -76,6 +92,10 @@ export class Villager {
     this.carryIndicator = createCarryIndicator();
     this.carryIndicator.visible = false;
     this.model.add(this.carryIndicator);
+
+    this.healthBar = createHealthBar(0.6, 0.1);
+    scene.add(this.healthBar.group);
+    this.syncHealthBarPosition();
   }
 
   setSelected(selected: boolean) {
@@ -120,31 +140,61 @@ export class Villager {
   }
 
   update(delta: number, now: number) {
+    if (!this.alive) return;
     this.workIndicator.visible =
       this.state === "gathering" || this.state === "building";
     this.carryIndicator.visible = this.carrying !== null;
     switch (this.state) {
       case "toBuild":
         this.updateToBuild(delta);
-        return;
+        break;
       case "building":
         this.updateBuilding(delta, now);
-        return;
+        break;
       case "toResource":
         this.updateToResource(delta, now);
-        return;
+        break;
       case "gathering":
         this.updateGathering(now);
-        return;
+        break;
       case "toHome":
         this.updateToHome(delta);
-        return;
+        break;
       case "moving":
         this.updateMoving(delta);
-        return;
+        break;
       default:
         this.updateIdle(delta, now);
     }
+    this.syncHealthBarPosition();
+  }
+
+  /** Returns true if this hit killed the villager. */
+  takeDamage(amount: number): boolean {
+    if (!this.alive) return false;
+    this.hp -= amount;
+    this.healthBar.setFraction(this.hp / VILLAGER_MAX_HP);
+    if (this.hp <= 0) {
+      this.alive = false;
+      this.releaseJob();
+      this.model.visible = false;
+      this.healthBar.group.visible = false;
+      return true;
+    }
+    return false;
+  }
+
+  dispose(scene: THREE.Scene) {
+    scene.remove(this.model);
+    scene.remove(this.healthBar.group);
+  }
+
+  private syncHealthBarPosition() {
+    this.healthBar.group.position.set(
+      this.model.position.x,
+      this.model.position.y + 1.6,
+      this.model.position.z,
+    );
   }
 
   private updateToBuild(delta: number) {
@@ -203,12 +253,16 @@ export class Villager {
       material.color.setHex(CARRY_COLOR[this.carrying]);
     }
     this.targetNode = null;
+    this.dropTarget = this.carrying
+      ? (this.dropOffFinder.nearestDropOff(this.carrying, this.model.position) ?? this.home)
+      : this.home;
     this.state = "toHome";
   }
 
   private updateToHome(delta: number) {
-    this.moveToward(this.home, delta);
-    if (this.model.position.distanceTo(this.home) <= ARRIVE_DIST) {
+    const target = this.dropTarget ?? this.home;
+    this.moveToward(target, delta);
+    if (this.model.position.distanceTo(target) <= ARRIVE_DIST) {
       if (this.carrying) {
         const bonus = this.getGatherBonus(this.carrying);
         this.inventory.add(this.carrying, 1 + bonus);

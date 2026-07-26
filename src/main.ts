@@ -12,14 +12,18 @@ import {
   disposeBuildingMesh,
 } from "./world/buildings";
 import type { HealthBar } from "./world/healthBar";
-import { Villager } from "./world/villager";
+import { Villager, VILLAGER_MAX_HP } from "./world/villager";
 import { Soldier, getUnitStats, type UnitKind } from "./world/soldier";
 import {
   createEnemyCamp,
   updateEnemyCamp,
   wrapCampBuilding,
+  EnemyGuard,
+  GUARD_MAX_HP,
+  GUARD_ATTACK_DAMAGE,
+  GUARD_ATTACK_RANGE,
+  GUARD_ATTACK_COOLDOWN,
   type EnemyCamp,
-  type EnemyGuard,
 } from "./world/enemyCamp";
 import { Effects } from "./world/effects";
 import { Inventory } from "./systems/inventory";
@@ -40,6 +44,7 @@ import {
   fullRepairCost,
   repairBuilding as applyRepair,
 } from "./systems/production";
+import { populationCapacity } from "./systems/population";
 import { createLighting } from "./systems/lighting";
 import { createComposer } from "./systems/postfx";
 import { RtsCamera } from "./systems/rtsCamera";
@@ -155,18 +160,6 @@ function beginConstruction(placed: PlacedBuilding, progress = 0) {
 function finishConstruction(building: PlacedBuilding) {
   setConstructionAppearance(building.mesh, 1);
   registerBuildingBehavior(building);
-
-  // A finished House brings its villager with it.
-  if (building.type === "house") {
-    const villager = makeVillager(building.position);
-    villagers.push(villager);
-    building.onDestroyed = () => {
-      scene.remove(villager.model);
-      villagers = villagers.filter((v) => v !== villager);
-      selectedVillagers = selectedVillagers.filter((v) => v !== villager);
-      syncSelectionOutline();
-    };
-  }
 }
 
 function makeSoldier(at: THREE.Vector3, kind: UnitKind): Soldier {
@@ -197,6 +190,7 @@ function makeVillager(at: THREE.Vector3): Villager {
     scene,
     at,
     resources,
+    townBuildings,
     inventory,
     gatherBonus,
     onVillagerBuildTick,
@@ -205,18 +199,30 @@ function makeVillager(at: THREE.Vector3): Villager {
 
 let villagers: Villager[] = [];
 let soldiers: Soldier[] = [];
-let producers: { building: PlacedBuilding; timer: number }[] = [];
 
-/** Registers a placed building as a passive resource producer if its def
- * calls for one, wiring cleanup for when it's destroyed. Unit training is
- * player-triggered (see startProduction) rather than automatic. */
+/** Total pop the player currently has, and how much housing allows —
+ * villagers and soldiers alike count against the cap. */
+function populationUsed(): number {
+  return villagers.length + soldiers.length;
+}
+function populationCap(): number {
+  const houses = townBuildings.list.filter(
+    (b) => b.type === "house" && !b.underConstruction,
+  ).length;
+  const townCenters = townBuildings.list.filter(
+    (b) => b.type === "town_center" && !b.underConstruction,
+  ).length;
+  return populationCapacity(houses, townCenters);
+}
+
+/** A finished Farm is a gatherable food source, not a passive producer —
+ * villagers must walk to it, harvest it, and carry the food off to a Mill or
+ * Town Center like any other resource. Registers/unregisters its node
+ * alongside the building's own lifecycle. */
 function registerBuildingBehavior(placed: PlacedBuilding) {
-  if (placed.def.produces) {
-    const entry = { building: placed, timer: 0 };
-    producers.push(entry);
-    placed.onDestroyed = () => {
-      producers = producers.filter((e) => e !== entry);
-    };
+  if (placed.type === "farm") {
+    const node = resources.addNode("food", placed.position);
+    placed.onDestroyed = () => resources.removeNode(node);
   }
 }
 
@@ -250,19 +256,6 @@ if (savedGame) {
     soldier.model.position.set(s.x, heightAt(s.x, s.z), s.z);
     soldiers.push(soldier);
   }
-  for (const placed of townBuildings.list) {
-    if (placed.type !== "house") continue;
-    const villager = villagers.find(
-      (v) => v.getHome().distanceTo(placed.position) < 0.01,
-    );
-    if (!villager) continue;
-    placed.onDestroyed = () => {
-      scene.remove(villager.model);
-      villagers = villagers.filter((v) => v !== villager);
-      selectedVillagers = selectedVillagers.filter((v) => v !== villager);
-      syncSelectionOutline();
-    };
-  }
   inventory.restore(savedGame.inventory);
   buildManager.restore(savedGame.built);
   crafting.restore(savedGame.crafted);
@@ -290,6 +283,23 @@ rtsCamera.focus.set(0, heightAt(0, 0), 0);
 let selectedVillagers: Villager[] = [];
 let selectedBuildingInfo: PlacedBuilding | null = null;
 let selectedSoldiers: Soldier[] = [];
+/** A single enemy guard or villager, view-only — no commands, and never more
+ * than one (a box-drag never picks these up; only a direct click does). */
+let selectedEnemyUnit: EnemyGuard | Villager | null = null;
+
+/** Tracks the last unit clicked (desktop only) so a second click on the same
+ * unit within the window reads as a double-click rather than two selects. */
+const DOUBLE_CLICK_MS = 350;
+let lastUnitClick: { unit: Villager | Soldier; time: number } | null = null;
+
+/** On-screen (not just in front of the camera) — a box-select-style check so
+ * "select all of this kind" only grabs what's actually visible right now. */
+function isOnScreen(pos: THREE.Vector3): boolean {
+  const p = rtsCamera.worldToScreen(pos);
+  return (
+    p !== null && p.x >= 0 && p.x <= window.innerWidth && p.y >= 0 && p.y <= window.innerHeight
+  );
+}
 
 /** Keeps the post-fx outline in sync with whatever is currently selected —
  * the same rim-around-the-unit treatment the AoE2 selection research called
@@ -300,6 +310,7 @@ function syncSelectionOutline() {
     ...selectedSoldiers.map((s) => s.model),
   ];
   if (selectedBuildingInfo) objects.push(selectedBuildingInfo.mesh);
+  if (selectedEnemyUnit) objects.push(selectedEnemyUnit.model);
   setOutlined(objects);
 }
 
@@ -307,6 +318,7 @@ function syncSelectionOutline() {
  * so selecting units only clears the building selection, not each other. */
 function selectUnits(villagerList: Villager[], soldierList: Soldier[]) {
   deselectBuilding();
+  deselectEnemyUnit();
   for (const v of selectedVillagers) v.setSelected(false);
   for (const s of selectedSoldiers) s.setSelected(false);
   selectedVillagers = villagerList;
@@ -327,10 +339,12 @@ function deselectUnits() {
 function selectBuilding(building: PlacedBuilding) {
   deselectUnits();
   deselectBuilding();
+  deselectEnemyUnit();
   selectedBuildingInfo = building;
   const ring = building.mesh.userData.selectionRing as THREE.Mesh | undefined;
   if (ring) ring.visible = true;
   syncSelectionOutline();
+  updateRallyMarker();
 }
 
 function deselectBuilding() {
@@ -342,11 +356,70 @@ function deselectBuilding() {
   }
   selectedBuildingInfo = null;
   syncSelectionOutline();
+  updateRallyMarker();
+}
+
+/** Read-only look at a single hostile unit — never issues commands, just
+ * surfaces its attributes in the info panel. */
+function selectEnemyUnit(unit: EnemyGuard | Villager) {
+  deselectUnits();
+  deselectBuilding();
+  selectedEnemyUnit = unit;
+  syncSelectionOutline();
+}
+
+function deselectEnemyUnit() {
+  selectedEnemyUnit = null;
+  syncSelectionOutline();
 }
 
 function deselectAll() {
   deselectUnits();
   deselectBuilding();
+  deselectEnemyUnit();
+}
+
+/** A small flag-on-a-pole shown at a training building's rally point while
+ * that building is selected — created lazily since most games won't set one. */
+let rallyMarker: THREE.Group | null = null;
+function ensureRallyMarker(): THREE.Group {
+  if (rallyMarker) return rallyMarker;
+  const group = new THREE.Group();
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.03, 0.03, 1, 6),
+    new THREE.MeshStandardMaterial({ color: 0xd8c48a }),
+  );
+  pole.position.y = 0.5;
+  group.add(pole);
+  const flag = new THREE.Mesh(
+    new THREE.ConeGeometry(0.22, 0.36, 4),
+    new THREE.MeshStandardMaterial({ color: 0xffcc55 }),
+  );
+  flag.position.set(0, 0.85, 0.15);
+  flag.rotation.x = Math.PI / 2;
+  group.add(flag);
+  group.visible = false;
+  scene.add(group);
+  rallyMarker = group;
+  return group;
+}
+
+/** Keeps the rally flag matched to the selected building's rally point (if
+ * any) — hidden the moment nothing training is selected. */
+function updateRallyMarker() {
+  const marker = ensureRallyMarker();
+  const point = selectedBuildingInfo?.rallyPoint;
+  marker.visible = !!point;
+  if (point) marker.position.copy(point);
+}
+
+/** Right-clicking the ground with a training building selected sets where
+ * its future units head off to, instead of just standing at the doorway. */
+function setRallyPoint(building: PlacedBuilding, sx: number, sy: number) {
+  const point = rtsCamera.raycastGround(sx, sy);
+  if (!point) return;
+  building.rallyPoint = new THREE.Vector3(point.x, heightAt(point.x, point.z), point.z);
+  updateRallyMarker();
 }
 
 function resolveVillagerFromHit(hit: THREE.Object3D): Villager | null {
@@ -461,6 +534,12 @@ function buildingPreviewInfo(def: BuildingDef): SelectionInfo {
       `${unitLabel(def.trains.unit)} (${def.trains.foodCost}${RESOURCE_ICON.food}, ${def.trains.time}s)`,
     ]);
   }
+  if (def.dropOff) {
+    stats.push([
+      "📦 Drop-off",
+      def.dropOff === "any" ? "Any resource" : `${RESOURCE_ICON[def.dropOff]} ${def.dropOff}`,
+    ]);
+  }
   return {
     key: `preview:${def.id}`,
     title: def.name,
@@ -520,14 +599,17 @@ function buildingCommands(building: PlacedBuilding): CommandButton[] {
     const trains = def.trains;
     const queueFull = building.queue.length >= MAX_QUEUE;
     const affordable = inventory.has("food", trains.foodCost);
+    const popFull = populationUsed() >= populationCap();
     commands.push({
       icon: unitIcon(trains.unit),
       label: unitLabel(trains.unit),
       sub: `${trains.foodCost}${RESOURCE_ICON.food}`,
-      disabled: !affordable || queueFull,
-      tooltip: queueFull
-        ? `Queue is full (${MAX_QUEUE})`
-        : `Train ${unitLabel(trains.unit)} — ${trains.foodCost} food, charged now`,
+      disabled: !affordable || queueFull || popFull,
+      tooltip: popFull
+        ? `Population full (${populationUsed()}/${populationCap()}) — build a House for more room`
+        : queueFull
+          ? `Queue is full (${MAX_QUEUE})`
+          : `Train ${unitLabel(trains.unit)} — ${trains.foodCost} food, charged now`,
       onClick: () => enqueueUnit(building, inventory),
     });
   }
@@ -569,6 +651,39 @@ function buildingCommands(building: PlacedBuilding): CommandButton[] {
 }
 
 function buildSelectionInfo(): SelectionInfo | null {
+  if (selectedEnemyUnit) {
+    const unit = selectedEnemyUnit;
+    if (unit instanceof EnemyGuard) {
+      return {
+        key: unit,
+        title: "Enemy Guard",
+        portrait: "🗡️",
+        description: unit.isRaiding
+          ? "Hostile — currently raiding your town."
+          : "Hostile — patrols and defends the enemy camp.",
+        hp: unit.hp,
+        maxHp: GUARD_MAX_HP,
+        stats: [
+          ["⚔️ Damage", `${GUARD_ATTACK_DAMAGE}`],
+          ["➹ Range", `${GUARD_ATTACK_RANGE}`],
+          ["⏱ Cooldown", `${GUARD_ATTACK_COOLDOWN}s`],
+        ],
+        commands: [],
+      };
+    }
+    return {
+      key: unit,
+      title: "Enemy Villager",
+      portrait: "🧑‍🌾",
+      description: unit.isIdle
+        ? "Hostile — idle, part of the enemy camp's economy."
+        : "Hostile — gathering or building for the enemy camp.",
+      hp: unit.hp,
+      maxHp: VILLAGER_MAX_HP,
+      commands: [],
+    };
+  }
+
   if (selectedBuildingInfo) {
     const building = selectedBuildingInfo;
     const def = building.def;
@@ -579,6 +694,15 @@ function buildSelectionInfo(): SelectionInfo | null {
           ["⏱ Cooldown", `${def.attack.cooldown}s`],
         ]
       : [];
+    if (def.trains) {
+      stats.push(["🚩 Rally", building.rallyPoint ? "Set — right-click ground to move it" : "Right-click ground to set"]);
+    }
+    if (def.dropOff) {
+      stats.push([
+        "📦 Drop-off",
+        def.dropOff === "any" ? "Any resource" : `${RESOURCE_ICON[def.dropOff]} ${def.dropOff}`,
+      ]);
+    }
 
     const trains = def.trains;
     const building_ = building;
@@ -689,6 +813,8 @@ function buildSelectionInfo(): SelectionInfo | null {
       portrait: "🧑‍🌾",
       description:
         "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
+      hp: selectedVillagers[0].hp,
+      maxHp: VILLAGER_MAX_HP,
       commands: villagerCommands(),
     };
   }
@@ -738,6 +864,21 @@ const MIN_BUILDING_SPACING = 3;
  * MIN_BUILDING_SPACING so it can't ever straddle two adjacent sites. */
 const SITE_CLICK_RADIUS = 2.2;
 
+/** Held while the Shift key is down, so confirming a placement can re-enter
+ * placement mode for the same building instead of closing out — lets a
+ * villager queue up several of the same building without reopening the
+ * build menu each time. */
+let shiftHeld = false;
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Shift") shiftHeld = true;
+});
+window.addEventListener("keyup", (e) => {
+  if (e.key === "Shift") shiftHeld = false;
+});
+window.addEventListener("blur", () => {
+  shiftHeld = false;
+});
+
 function startPlacement(building: BuildingDef) {
   if (ghost) {
     scene.remove(ghost);
@@ -768,10 +909,11 @@ function confirmPlacement() {
   if (!selectedBuildingType || !ghost) return;
   if (townBuildings.isTooCloseToAny(ghost.position, MIN_BUILDING_SPACING))
     return;
-  if (!buildManager.build(selectedBuildingType)) return;
+  const buildingType = selectedBuildingType;
+  if (!buildManager.build(buildingType)) return;
 
   const placed = spawnBuilding(
-    selectedBuildingType.id,
+    buildingType.id,
     ghost.position.x,
     ghost.position.z,
   );
@@ -780,7 +922,13 @@ function confirmPlacement() {
   beginConstruction(placed);
   for (const v of selectedVillagers) v.commandBuild(placed);
 
-  cancelPlacement();
+  // Shift keeps the same building selected for another placement instead of
+  // closing the menu — queuing up several without reopening Build each time.
+  if (shiftHeld) {
+    startPlacement(buildingType);
+  } else {
+    cancelPlacement();
+  }
 }
 
 function handleEscape() {
@@ -821,6 +969,19 @@ function commandSelectedUnits(sx: number, sy: number) {
       const guard = resolveEnemyGuardFromHit(guardHit);
       if (guard) {
         for (const s of selectedSoldiers) s.commandAttack(guard);
+        return;
+      }
+    }
+
+    const enemyVillagerHit = rtsCamera.raycastObjects(
+      sx,
+      sy,
+      enemyCamp.villagers.filter((v) => v.alive).map((v) => v.model),
+    );
+    if (enemyVillagerHit) {
+      const enemyVillager = resolveVillagerFromHit(enemyVillagerHit);
+      if (enemyVillager) {
+        for (const s of selectedSoldiers) s.commandAttack(enemyVillager);
         return;
       }
     }
@@ -934,7 +1095,11 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   }
 
   if (button === 2) {
-    commandSelectedUnits(sx, sy);
+    if (selectedBuildingInfo?.def.trains && !selectedBuildingInfo.underConstruction) {
+      setRallyPoint(selectedBuildingInfo, sx, sy);
+    } else {
+      commandSelectedUnits(sx, sy);
+    }
     return;
   }
 
@@ -946,7 +1111,14 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   if (villagerHit) {
     const villager = resolveVillagerFromHit(villagerHit);
     if (villager) {
-      selectUnits([villager], []);
+      const now = performance.now();
+      if (!isTouch && lastUnitClick?.unit === villager && now - lastUnitClick.time < DOUBLE_CLICK_MS) {
+        lastUnitClick = null;
+        selectUnits(villagers.filter((v) => v.alive && isOnScreen(v.model.position)), []);
+      } else {
+        lastUnitClick = { unit: villager, time: now };
+        selectUnits([villager], []);
+      }
       return;
     }
   }
@@ -959,7 +1131,17 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   if (soldierHit) {
     const soldier = resolveSoldierFromHit(soldierHit);
     if (soldier) {
-      selectUnits([], [soldier]);
+      const now = performance.now();
+      if (!isTouch && lastUnitClick?.unit === soldier && now - lastUnitClick.time < DOUBLE_CLICK_MS) {
+        lastUnitClick = null;
+        selectUnits(
+          [],
+          soldiers.filter((s) => s.alive && s.kind === soldier.kind && isOnScreen(s.model.position)),
+        );
+      } else {
+        lastUnitClick = { unit: soldier, time: now };
+        selectUnits([], [soldier]);
+      }
       return;
     }
   }
@@ -978,6 +1160,34 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
     const building = resolveBuildingFromHit(buildingHit);
     if (building) {
       selectBuilding(building);
+      return;
+    }
+  }
+
+  // Enemy units are view-only: a click selects at most one, purely to show
+  // its attributes — never a group, and never actionable.
+  const enemyGuardHit = rtsCamera.raycastObjects(
+    sx,
+    sy,
+    enemyCamp.guards.map((g) => g.model),
+  );
+  if (enemyGuardHit) {
+    const guard = resolveEnemyGuardFromHit(enemyGuardHit);
+    if (guard) {
+      selectEnemyUnit(guard);
+      return;
+    }
+  }
+
+  const enemyVillagerHit = rtsCamera.raycastObjects(
+    sx,
+    sy,
+    enemyCamp.villagers.map((v) => v.model),
+  );
+  if (enemyVillagerHit) {
+    const enemyVillager = resolveVillagerFromHit(enemyVillagerHit);
+    if (enemyVillager) {
+      selectEnemyUnit(enemyVillager);
       return;
     }
   }
@@ -1029,6 +1239,7 @@ function damageBuilding(building: PlacedBuilding, amount: number) {
     if (selectedBuildingInfo === building) {
       selectedBuildingInfo = null;
       syncSelectionOutline();
+      updateRallyMarker();
     }
   }
 }
@@ -1095,8 +1306,20 @@ function animate() {
   effects.update(delta);
   resources.update();
   for (const villager of villagers) villager.update(delta, time);
+  villagers = villagers.filter((v) => {
+    if (!v.alive) {
+      v.dispose(scene);
+      if (selectedVillagers.includes(v)) {
+        selectedVillagers = selectedVillagers.filter((sel) => sel !== v);
+        syncSelectionOutline();
+      }
+      return false;
+    }
+    return true;
+  });
   const combatTargets = [
     ...enemyCamp.guards,
+    ...enemyCamp.villagers,
     ...enemyCamp.townBuildings.list.map((b) => wrapCampBuilding(enemyCamp, b, inventory, scene, effects)),
   ];
   for (const soldier of soldiers) soldier.update(delta, time, combatTargets);
@@ -1112,24 +1335,23 @@ function animate() {
     return true;
   });
 
-  updateEnemyCamp(enemyCamp, scene, effects, delta, time, soldiers, townBuildings, damageBuilding);
-
-  for (const producer of producers) {
-    const { type, amount, interval } = producer.building.def.produces!;
-    producer.timer += delta;
-    if (producer.timer >= interval) {
-      producer.timer -= interval;
-      inventory.add(type, amount);
-    }
+  updateEnemyCamp(enemyCamp, scene, effects, delta, time, [...soldiers, ...villagers], townBuildings, damageBuilding);
+  if (selectedEnemyUnit && !selectedEnemyUnit.alive) {
+    deselectEnemyUnit();
   }
 
+  const hasPopRoom = populationUsed() < populationCap();
   for (const building of townBuildings.list) {
-    const finished = advanceProduction(building, time);
+    const finished = advanceProduction(building, time, hasPopRoom);
     if (!finished) continue;
     if (finished === "villager") {
-      villagers.push(makeVillager(building.position));
+      const villager = makeVillager(building.position);
+      villagers.push(villager);
+      if (building.rallyPoint) villager.commandMoveTo(building.rallyPoint);
     } else {
-      soldiers.push(makeSoldier(building.position, finished));
+      const soldier = makeSoldier(building.position, finished);
+      soldiers.push(soldier);
+      if (building.rallyPoint) soldier.commandMoveTo(building.rallyPoint);
     }
   }
 
@@ -1159,12 +1381,7 @@ function animate() {
     }
   }
 
-  hud.setTownStats(
-    villagers.length,
-    townBuildings.list.length,
-    soldiers.length,
-  );
-  hud.setRaidWarning(enemyCamp.raidTimer);
+  hud.setPopulation(populationUsed(), populationCap());
 
   const minimapPoints: { x: number; z: number; color: string; size?: number }[] = [];
   for (const node of resources.nodes) {
@@ -1204,7 +1421,7 @@ function animate() {
       MIN_BUILDING_SPACING,
     )
       ? "Too close to another building — move elsewhere"
-      : `Click (or tap ✓) to place ${selectedBuildingType.name}`;
+      : `Click (or tap ✓) to place ${selectedBuildingType.name} — hold Shift to queue another`;
   }
   hud.setPrompt(placementPrompt);
   hud.setSelectionInfo(buildSelectionInfo());
@@ -1240,6 +1457,7 @@ window.__game = {
       villagers: selectedVillagers,
       soldiers: selectedSoldiers,
       building: selectedBuildingInfo,
+      enemyUnit: selectedEnemyUnit,
     };
   },
   get resources() {

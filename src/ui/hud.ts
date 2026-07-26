@@ -36,6 +36,20 @@ export const RECIPE_ICON: Record<string, string> = {
 /** Fixed 5x3 command grid, matching AoE2's command panel footprint. */
 const COMMAND_SLOTS = 15;
 
+/** One hotkey per grid slot, in the same row-major order as the grid itself.
+ * Avoids WASD/arrows (camera pan), Shift (queue placement), Enter/Esc, and
+ * B/M (build-page jumps) — everything else already bound elsewhere. */
+const GRID_HOTKEY_CODES = [
+  "Digit1", "Digit2", "Digit3", "Digit4", "Digit5",
+  "Digit6", "Digit7", "Digit8", "Digit9", "Digit0",
+  "KeyQ", "KeyE", "KeyR", "KeyT", "KeyY",
+];
+const GRID_HOTKEY_LABELS = [
+  "1", "2", "3", "4", "5",
+  "6", "7", "8", "9", "0",
+  "Q", "E", "R", "T", "Y",
+];
+
 /** One slot in the AoE2-style command grid. A button either performs an
  * action (`onClick`) or drills into a sub-page of more commands
  * (`children`) — mirroring AoE2's villager Build → Economic/Military pages. */
@@ -92,9 +106,7 @@ export interface SelectionInfo {
 
 export class Hud {
   private inventoryEl: HTMLElement;
-  private townStatsEl: HTMLElement;
   private settingsMenuEl: HTMLElement;
-  private waveWarningEl: HTMLElement;
   private promptEl: HTMLElement;
   private cmdGridEl: HTMLElement;
   private commandsWrapEl: HTMLElement;
@@ -134,6 +146,7 @@ export class Hud {
   private onCancelPlacement: () => void = () => {};
   private onReset: () => void = () => {};
   private onCloseInfo: () => void = () => {};
+  private population = { used: 0, cap: 0 };
 
   constructor(
     root: HTMLElement,
@@ -142,12 +155,10 @@ export class Hud {
     root.innerHTML = `
       <div class="inventory"></div>
       <button class="settings-btn" id="settingsBtn" title="Settings">⚙️</button>
-      <div class="townstats"></div>
       <div class="settings-menu" hidden>
         <h2>Settings <button class="menu-close">✕</button></h2>
         <button class="settings-action" id="resetBtn">🔄 Reset Town</button>
       </div>
-      <div class="wave-warning"></div>
       <div class="prompt" hidden></div>
       <div class="select-box" hidden></div>
 
@@ -169,9 +180,7 @@ export class Hud {
       </div>
     `;
     this.inventoryEl = root.querySelector(".inventory")!;
-    this.townStatsEl = root.querySelector(".townstats")!;
     this.settingsMenuEl = root.querySelector(".settings-menu")!;
-    this.waveWarningEl = root.querySelector(".wave-warning")!;
     this.promptEl = root.querySelector(".prompt")!;
     this.cmdGridEl = root.querySelector(".cmd-grid")!;
     this.commandsWrapEl = root.querySelector(".aoe-commands")!;
@@ -288,6 +297,8 @@ export class Hud {
         this.jumpToBuildPage("Economic");
       } else if (e.code === "KeyM") {
         this.jumpToBuildPage("Military");
+      } else {
+        this.activateGridHotkey(e.code);
       }
     });
   }
@@ -558,6 +569,22 @@ export class Hud {
     this.renderCommandGrid();
   }
 
+  /** Presses whichever command-grid button occupies the slot for this key
+   * code, exactly as if it had been clicked — mirrors the on-button badges. */
+  private activateGridHotkey(code: string) {
+    if (this.placementActive) return;
+    const index = GRID_HOTKEY_CODES.indexOf(code);
+    if (index === -1) return;
+    const cmd = this.currentPageCommands[index];
+    if (!cmd || cmd.disabled) return;
+    if (cmd.children) {
+      this.commandPath.push(index);
+      this.renderCommandGrid();
+    } else {
+      cmd.onClick?.();
+    }
+  }
+
   /** Resolves the command list for the page the player has drilled into. */
   private resolveCurrentPage(): CommandButton[] {
     let page = this.rootCommands;
@@ -576,7 +603,8 @@ export class Hud {
     this.currentPageCommands = this.resolveCurrentPage();
     const cells: string[] = this.currentPageCommands.map(
       (cmd, i) => `
-        <button class="cmd-btn" data-i="${i}" title="${cmd.tooltip ?? cmd.label}">
+        <button class="cmd-btn" data-i="${i}" title="${cmd.tooltip ?? cmd.label} (${GRID_HOTKEY_LABELS[i]})">
+          <span class="cmd-hotkey">${GRID_HOTKEY_LABELS[i]}</span>
           <span class="cmd-icon">${cmd.icon}</span>
           <span class="cmd-name">${cmd.label}</span>
           ${cmd.sub ? `<span class="cmd-sub">${cmd.sub}</span>` : ""}
@@ -640,32 +668,24 @@ export class Hud {
   }
 
   private renderInventory() {
-    this.inventoryEl.innerHTML = (
-      Object.keys(RESOURCE_LABEL) as ResourceType[]
-    )
+    const resourceSlots = (Object.keys(RESOURCE_LABEL) as ResourceType[])
       .map(
         (type) =>
-          `<div class="slot">${RESOURCE_LABEL[type]}: ${this.inventory.get(type)}/${this.inventory.capacity}</div>`,
+          `<div class="slot">${RESOURCE_LABEL[type]}: ${this.inventory.get(type)}</div>`,
       )
       .join("");
+    const popFull = this.population.used >= this.population.cap;
+    this.inventoryEl.innerHTML =
+      resourceSlots +
+      `<div class="slot${popFull ? " pop-full" : ""}">👥 Population: ${this.population.used}/${this.population.cap}</div>`;
   }
 
-  setTownStats(population: number, buildingCount: number, soldierCount: number) {
-    const soldierLine = soldierCount > 0 ? `<br><small>⚔️ ${soldierCount} soldiers</small>` : "";
-    this.townStatsEl.innerHTML = `👥 ${population}<br><small>🏘️ ${buildingCount} buildings</small>${soldierLine}`;
-  }
-
-  /** Shows a countdown to the enemy camp's next raid attempt, with
-   * escalating urgency (color + pulse) as it gets close. No guaranteed
-   * count is shown — a raid can fizzle if the camp hasn't grown enough
-   * guards to spare any, so promising a number would sometimes be a lie. */
-  setRaidWarning(secondsLeft: number) {
-    const urgent = secondsLeft <= 10;
-    const soon = secondsLeft <= 20;
-    this.waveWarningEl.classList.toggle("urgent", urgent);
-    this.waveWarningEl.classList.toggle("soon", soon && !urgent);
-    const seconds = Math.max(0, Math.ceil(secondsLeft));
-    this.waveWarningEl.textContent = `⚔️ Raid incoming: ${seconds}s`;
+  /** Population is shown alongside wood/stone/food — it's just as much a
+   * resource players must manage (via Houses) as anything storable. */
+  setPopulation(used: number, cap: number) {
+    if (this.population.used === used && this.population.cap === cap) return;
+    this.population = { used, cap };
+    this.renderInventory();
   }
 
   setPrompt(text: string | null) {

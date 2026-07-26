@@ -19,8 +19,12 @@ export interface BuildingDef {
   /** Villager-seconds of work needed to construct it. Two villagers halve
    * the wall-clock time. */
   buildTime: number;
-  /** If set, this building passively produces a resource over time. */
-  produces?: { type: ResourceType; amount: number; interval: number };
+  /** If set, villagers carrying this resource (or anything, for "any") drop
+   * it off here instead of needing to walk all the way back to wherever they
+   * started — AoE2's Town Center / Mill / Lumber Camp / Mining Camp role.
+   * Nothing here produces resources on its own; a villager still has to
+   * gather and carry every load. */
+  dropOff?: ResourceType | "any";
   /** If set, selecting this building offers a "Train" action that spends
    * food and produces a unit after `time` seconds. */
   trains?: { unit: UnitKind | "villager"; foodCost: number; time: number };
@@ -36,18 +40,19 @@ export const BUILDINGS: BuildingDef[] = [
     name: "Town Center",
     cost: { wood: 30, stone: 15 },
     description:
-      "Trains Villagers. Your town starts with one; building more expands where you can grow.",
+      "Trains Villagers and adds +5 population capacity. Also a drop-off point for any resource. Your town starts with one; building more expands where you can grow.",
     maxHp: 400,
     buildTime: 30,
     maxBuilt: 3,
     requiresTownCenter: true,
+    dropOff: "any",
     trains: { unit: "villager", foodCost: 3, time: 8 },
   },
   {
     id: "house",
     name: "House",
     cost: { wood: 5 },
-    description: "Spawns a villager who gathers nearby resources",
+    description: "+5 population capacity",
     maxHp: 100,
     buildTime: 12,
     requiresTownCenter: true,
@@ -56,41 +61,40 @@ export const BUILDINGS: BuildingDef[] = [
     id: "farm",
     name: "Farm",
     cost: { wood: 5 },
-    description: "+1 food every 8s",
+    description: "A plantable food patch — villagers gather it like any resource, then carry it to a Mill or Town Center",
     maxHp: 70,
     buildTime: 10,
     requiresTownCenter: true,
-    produces: { type: "food", amount: 1, interval: 8 },
   },
   {
     id: "mill",
     name: "Mill",
     cost: { wood: 8 },
-    description: "+1 food every 6s — a sturdier food producer than a Farm",
+    description: "Food drop-off point — build it near farms and berries so villagers don't have to walk as far",
     maxHp: 90,
     buildTime: 16,
     requiresTownCenter: true,
-    produces: { type: "food", amount: 1, interval: 6 },
+    dropOff: "food",
   },
   {
     id: "lumber_camp",
     name: "Lumber Camp",
     cost: { wood: 8 },
-    description: "+1 wood every 6s",
+    description: "Wood drop-off point — build it near trees so villagers don't have to walk as far",
     maxHp: 90,
     buildTime: 16,
     requiresTownCenter: true,
-    produces: { type: "wood", amount: 1, interval: 6 },
+    dropOff: "wood",
   },
   {
     id: "mining_camp",
     name: "Mining Camp",
     cost: { wood: 8 },
-    description: "+1 stone every 6s",
+    description: "Stone drop-off point — build it near rocks so villagers don't have to walk as far",
     maxHp: 90,
     buildTime: 16,
     requiresTownCenter: true,
-    produces: { type: "stone", amount: 1, interval: 6 },
+    dropOff: "stone",
   },
   {
     id: "blacksmith",

@@ -56,11 +56,14 @@ export function cancelQueued(
 
 /**
  * Drives a building's queue. Starts the next unit when idle, and returns the
- * finished unit on the tick it completes (otherwise null).
+ * finished unit on the tick it completes (otherwise null). If population is
+ * full, a finished unit is held rather than delivered — it completes on the
+ * first tick room opens up, instead of being silently lost.
  */
 export function advanceProduction(
   building: PlacedBuilding,
   now: number,
+  hasPopulationRoom = true,
 ): UnitKind | "villager" | null {
   const trains = building.def.trains;
   if (!trains || building.underConstruction) return null;
@@ -68,7 +71,11 @@ export function advanceProduction(
   if (building.producingUntil === undefined && building.queue.length > 0) {
     building.producingUntil = now + trains.time;
   }
-  if (building.producingUntil !== undefined && now >= building.producingUntil) {
+  if (
+    building.producingUntil !== undefined &&
+    now >= building.producingUntil &&
+    hasPopulationRoom
+  ) {
     const unit = building.queue.shift() ?? null;
     building.producingUntil = undefined;
     return unit;

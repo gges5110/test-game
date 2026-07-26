@@ -8,7 +8,6 @@ import {
 } from "./buildings";
 import { createHealthBar, type HealthBar } from "./healthBar";
 import { Villager } from "./villager";
-import type { Soldier } from "./soldier";
 import type { Combatant } from "./combatant";
 import type { GatherSource, ResourceNode, ResourceType } from "./resources";
 import type { Effects } from "./effects";
@@ -17,11 +16,11 @@ import { BuildManager, getBuildingDef } from "../systems/building";
 import { TownBuildings, type PlacedBuilding } from "../systems/townBuildings";
 import { enqueueUnit, advanceProduction, contributeBuild } from "../systems/production";
 
-const GUARD_MAX_HP = 50;
+export const GUARD_MAX_HP = 50;
 const GUARD_SPEED = 2.2;
-const GUARD_ATTACK_RANGE = 1.4;
-const GUARD_ATTACK_DAMAGE = 12;
-const GUARD_ATTACK_COOLDOWN = 1.0;
+export const GUARD_ATTACK_RANGE = 1.4;
+export const GUARD_ATTACK_DAMAGE = 12;
+export const GUARD_ATTACK_COOLDOWN = 1.0;
 /** How far a *patrolling* guard will chase a soldier from its home before
  * giving up — a raiding guard (deliberately far from home) ignores this. */
 const GUARD_LEASH_RANGE = 16;
@@ -86,14 +85,14 @@ export class EnemyGuard implements Combatant {
   update(
     delta: number,
     now: number,
-    soldiers: Soldier[],
+    targets: Combatant[],
     playerTownBuildings: TownBuildings,
     damagePlayerBuilding: (building: PlacedBuilding, amount: number) => void,
   ) {
     if (!this.alive) return;
     this.updateAttackAnim(delta);
 
-    const target = this.findSoldierTarget(soldiers);
+    const target = this.findTarget(targets);
     if (target) {
       const dist = this.model.position.distanceTo(target.model.position);
       if (dist > GUARD_ATTACK_RANGE) {
@@ -148,18 +147,18 @@ export class EnemyGuard implements Combatant {
     scene.remove(this.healthBar.group);
   }
 
-  private findSoldierTarget(soldiers: Soldier[]): Soldier | null {
-    let nearest: Soldier | null = null;
+  private findTarget(targets: Combatant[]): Combatant | null {
+    let nearest: Combatant | null = null;
     let nearestDist = Infinity;
-    for (const soldier of soldiers) {
-      if (!soldier.alive) continue;
-      if (this.state === "patrol" && this.home.distanceTo(soldier.model.position) > GUARD_LEASH_RANGE) {
+    for (const candidate of targets) {
+      if (!candidate.alive) continue;
+      if (this.state === "patrol" && this.home.distanceTo(candidate.model.position) > GUARD_LEASH_RANGE) {
         continue;
       }
-      const dist = this.model.position.distanceTo(soldier.model.position);
+      const dist = this.model.position.distanceTo(candidate.model.position);
       if (dist < nearestDist) {
         nearestDist = dist;
-        nearest = soldier;
+        nearest = candidate;
       }
     }
     return nearest;
@@ -387,7 +386,8 @@ class LocalResourcePatch implements GatherSource {
 // --- The camp itself ---------------------------------------------------------
 
 const STARTING_LAYOUT: { id: string; offset: [number, number] }[] = [
-  { id: "outpost", offset: [0, 0] },
+  { id: "town_center", offset: [0, 0] },
+  { id: "outpost", offset: [0, -3.4] },
   { id: "house", offset: [-3.2, 2.6] },
   { id: "house", offset: [3.2, 2.6] },
 ];
@@ -436,7 +436,7 @@ export interface EnemyCamp {
 }
 
 function spawnCampVillager(camp: EnemyCamp, at: THREE.Vector3, scene: THREE.Scene): Villager {
-  const villager = new Villager(scene, at, camp.resourcePatch, camp.inventory, () => 0, (site, delta) => {
+  const villager = new Villager(scene, at, camp.resourcePatch, camp.townBuildings, camp.inventory, () => 0, (site, delta) => {
     const building = site as PlacedBuilding;
     const completed = contributeBuild(building, delta);
     setConstructionAppearance(building.mesh, building.buildProgress);
@@ -468,10 +468,6 @@ export function createEnemyCamp(scene: THREE.Scene, center: THREE.Vector3, effec
   const inventory = new Inventory();
   const buildManager = new BuildManager(inventory);
   const townBuildings = new TownBuildings();
-  // The camp has no visible Town Center — this only satisfies the
-  // requiresTownCenter gate other buildings check, since the camp
-  // conceptually already has a base (the Outpost serves as its keep).
-  buildManager.grant("town_center");
 
   for (const spot of STARTING_LAYOUT) {
     const x = center.x + spot.offset[0];
@@ -499,8 +495,8 @@ export function createEnemyCamp(scene: THREE.Scene, center: THREE.Vector3, effec
     resourcePatch: patch,
   };
 
-  for (let i = 0; i < 2; i++) {
-    const angle = (i / 2) * Math.PI * 2;
+  for (let i = 0; i < 3; i++) {
+    const angle = (i / 3) * Math.PI * 2;
     const x = center.x + Math.cos(angle) * 2;
     const z = center.z + Math.sin(angle) * 2;
     camp.villagers.push(
@@ -605,16 +601,23 @@ export function updateEnemyCamp(
   effects: Effects,
   delta: number,
   now: number,
-  playerSoldiers: Soldier[],
+  playerCombatants: Combatant[],
   playerTownBuildings: TownBuildings,
   damagePlayerBuilding: (building: PlacedBuilding, amount: number) => void,
 ) {
   camp.resourcePatch.update();
 
   for (const villager of camp.villagers) villager.update(delta, now);
+  camp.villagers = camp.villagers.filter((v) => {
+    if (!v.alive) {
+      v.dispose(scene);
+      return false;
+    }
+    return true;
+  });
 
   for (const guard of camp.guards) {
-    guard.update(delta, now, playerSoldiers, playerTownBuildings, damagePlayerBuilding);
+    guard.update(delta, now, playerCombatants, playerTownBuildings, damagePlayerBuilding);
   }
   camp.guards = camp.guards.filter((g) => {
     if (!g.alive) {

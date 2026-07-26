@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { BuildingDef } from "./building";
 import type { UnitKind } from "../world/soldier";
+import type { ResourceType } from "../world/resources";
 
 export interface PlacedBuilding {
   id: number;
@@ -25,6 +26,8 @@ export interface PlacedBuilding {
   producingUntil?: number;
   /** Called once when this building is destroyed (e.g. a House removing its villager). */
   onDestroyed?: () => void;
+  /** Where newly trained units head off to, if set — a training building only. */
+  rallyPoint?: THREE.Vector3;
 }
 
 let nextId = 1;
@@ -83,6 +86,24 @@ export class TownBuildings {
 
   findInRange(position: THREE.Vector3, range: number): PlacedBuilding[] {
     return this.list.filter((b) => position.distanceTo(b.position) <= range);
+  }
+
+  /** Nearest finished building a villager carrying `type` can drop it off at
+   * — a Town Center (any resource) or the matching specialized building.
+   * Satisfies DropOffFinder structurally. */
+  nearestDropOff(type: ResourceType, from: THREE.Vector3): THREE.Vector3 | null {
+    let nearest: THREE.Vector3 | null = null;
+    let nearestDist = Infinity;
+    for (const b of this.list) {
+      if (b.underConstruction) continue;
+      if (b.def.dropOff !== "any" && b.def.dropOff !== type) continue;
+      const dist = from.distanceTo(b.position);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearest = b.position;
+      }
+    }
+    return nearest;
   }
 
   isTooCloseToAny(position: THREE.Vector3, minSpacing: number): boolean {

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { heightAt } from "./terrain";
+import { heightAt, avoidWaterDirection } from "./terrain";
 import type { Combatant } from "./combatant";
 import { createHealthBar, type HealthBar } from "./healthBar";
 
@@ -259,11 +259,19 @@ export class Soldier {
     toTarget.y = 0;
     const dist = toTarget.length();
     if (dist < 1e-4) return;
-    toTarget.normalize().multiplyScalar(Math.min(this.stats.speed * delta, dist));
-    this.model.position.x += toTarget.x;
-    this.model.position.z += toTarget.z;
+    const step = Math.min(this.stats.speed * delta, dist);
+    const dir = toTarget.normalize();
+    const steered = avoidWaterDirection(
+      this.model.position.x,
+      this.model.position.z,
+      dir.x,
+      dir.z,
+      step + 0.5,
+    );
+    this.model.position.x += steered.x * step;
+    this.model.position.z += steered.z * step;
     this.model.position.y = heightAt(this.model.position.x, this.model.position.z);
-    this.model.rotation.y = Math.atan2(toTarget.x, toTarget.z);
+    this.model.rotation.y = Math.atan2(steered.x, steered.z);
   }
 }
 

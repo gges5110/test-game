@@ -16,6 +16,11 @@ export interface BuildingDef {
   attack?: { range: number; damage: number; cooldown: number };
   /** Height (above the building's base) the attack beam is drawn from. Defaults to 2. */
   attackOriginY?: number;
+  /** Max villagers that can hide inside for protection — AoE2's garrison. */
+  garrisonCapacity?: number;
+  /** If set, having villagers garrisoned grants an auto-attack (a Town
+   * Center has none of its own otherwise), scaled by how many are inside. */
+  garrisonAttack?: { range: number; damagePerVillager: number; cooldown: number };
   /** Villager-seconds of work needed to construct it. Two villagers halve
    * the wall-clock time. */
   buildTime: number;
@@ -40,13 +45,16 @@ export const BUILDINGS: BuildingDef[] = [
     name: "Town Center",
     cost: { wood: 30, stone: 15 },
     description:
-      "Trains Villagers and adds +5 population capacity. Also a drop-off point for any resource. Your town starts with one; building more expands where you can grow.",
+      "Trains Villagers and adds +5 population capacity. Also a drop-off point for any resource. Villagers can garrison inside for safety, which arms it with an auto-attack. Your town starts with one; building more expands where you can grow.",
     maxHp: 400,
     buildTime: 30,
     maxBuilt: 3,
     requiresTownCenter: true,
     dropOff: "any",
     trains: { unit: "villager", foodCost: 3, time: 8 },
+    garrisonCapacity: 10,
+    garrisonAttack: { range: 8, damagePerVillager: 3, cooldown: 1.5 },
+    attackOriginY: 2.4,
   },
   {
     id: "house",
@@ -151,13 +159,14 @@ export const BUILDINGS: BuildingDef[] = [
     id: "castle",
     name: "Castle",
     cost: { stone: 22 },
-    description: "Your strongest structure — stone-only, huge HP, heavy attack",
+    description: "Your strongest structure — stone-only, huge HP, heavy attack. Villagers can garrison inside for safety.",
     maxHp: 300,
     buildTime: 40,
     requiresTownCenter: true,
     maxBuilt: 2,
     attack: { range: 15, damage: 35, cooldown: 2 },
     attackOriginY: 3.2,
+    garrisonCapacity: 15,
   },
 ];
 

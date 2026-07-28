@@ -158,6 +158,110 @@ html, body {
   transform: scale(0.97);
 }
 
+#hud .defeat-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  z-index: 50;
+}
+
+#hud .defeat-panel {
+  background: linear-gradient(180deg, var(--wood-light) 0%, var(--wood-mid) 45%, var(--wood-dark) 100%);
+  border: 3px solid #d64545;
+  border-radius: 12px;
+  padding: 28px 34px;
+  text-align: center;
+  max-width: 360px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+}
+
+#hud .defeat-panel h1 {
+  margin: 0 0 10px;
+  font-size: 22px;
+  color: #ff9a9a;
+}
+
+#hud .defeat-panel p {
+  margin: 0 0 18px;
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+#hud .defeat-restart {
+  cursor: pointer;
+  border: 2px solid var(--bronze);
+  border-radius: 8px;
+  padding: 10px 22px;
+  font-size: 15px;
+  color: white;
+  background: linear-gradient(180deg, #a03a3a 0%, #4a1a1a 100%);
+  transition: filter 0.12s ease, transform 0.08s ease;
+}
+
+#hud .defeat-restart:hover {
+  filter: brightness(1.15);
+}
+
+#hud .defeat-restart:active {
+  transform: scale(0.96);
+}
+
+#hud .victory-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  z-index: 50;
+}
+
+#hud .victory-panel {
+  background: linear-gradient(180deg, var(--wood-light) 0%, var(--wood-mid) 45%, var(--wood-dark) 100%);
+  border: 3px solid #e8c34a;
+  border-radius: 12px;
+  padding: 28px 34px;
+  text-align: center;
+  max-width: 360px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+}
+
+#hud .victory-panel h1 {
+  margin: 0 0 10px;
+  font-size: 22px;
+  color: #ffe08a;
+}
+
+#hud .victory-panel p {
+  margin: 0 0 18px;
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+#hud .victory-continue {
+  cursor: pointer;
+  border: 2px solid var(--bronze);
+  border-radius: 8px;
+  padding: 10px 22px;
+  font-size: 15px;
+  color: white;
+  background: linear-gradient(180deg, #a3862c 0%, #4a3c10 100%);
+  transition: filter 0.12s ease, transform 0.08s ease;
+}
+
+#hud .victory-continue:hover {
+  filter: brightness(1.15);
+}
+
+#hud .victory-continue:active {
+  transform: scale(0.96);
+}
+
 #hud .prompt {
   position: absolute;
   bottom: 202px;

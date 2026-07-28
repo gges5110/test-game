@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { heightAt } from "./terrain";
+import { heightAt, avoidWaterDirection } from "./terrain";
 import {
   createBuildingMesh,
   captureStructureMeshes,
@@ -9,7 +9,7 @@ import {
 import { createHealthBar, type HealthBar } from "./healthBar";
 import { Villager } from "./villager";
 import type { Combatant } from "./combatant";
-import type { GatherSource, ResourceNode, ResourceType } from "./resources";
+import type { GatherSource, ResourceType } from "./resources";
 import type { Effects } from "./effects";
 import { Inventory } from "../systems/inventory";
 import { BuildManager, getBuildingDef } from "../systems/building";
@@ -222,11 +222,19 @@ export class EnemyGuard implements Combatant {
     toTarget.y = 0;
     const dist = toTarget.length();
     if (dist < 1e-4) return;
-    toTarget.normalize().multiplyScalar(Math.min(GUARD_SPEED * delta, dist));
-    this.model.position.x += toTarget.x;
-    this.model.position.z += toTarget.z;
+    const step = Math.min(GUARD_SPEED * delta, dist);
+    const dir = toTarget.normalize();
+    const steered = avoidWaterDirection(
+      this.model.position.x,
+      this.model.position.z,
+      dir.x,
+      dir.z,
+      step + 0.5,
+    );
+    this.model.position.x += steered.x * step;
+    this.model.position.z += steered.z * step;
     this.model.position.y = heightAt(this.model.position.x, this.model.position.z);
-    this.model.rotation.y = Math.atan2(toTarget.x, toTarget.z);
+    this.model.rotation.y = Math.atan2(steered.x, steered.z);
   }
 }
 
@@ -267,120 +275,6 @@ function tintHostile(mesh: THREE.Group) {
     if (!material.color) return;
     material.color.multiply(new THREE.Color(1, 0.6, 0.56));
   });
-}
-
-// --- Local resource patch ---------------------------------------------------
-
-const PATCH_RESPAWN_SECONDS = 25;
-const PATCH_SPOTS: { type: ResourceType; x: number; z: number }[] = [
-  { type: "wood", x: 6.5, z: -4 },
-  { type: "wood", x: 8, z: -1 },
-  { type: "stone", x: -6.5, z: -3 },
-  { type: "stone", x: -8, z: 0.5 },
-  { type: "food", x: 0, z: -7.5 },
-  { type: "food", x: 2.2, z: -8.5 },
-];
-
-function createPatchNodeMesh(type: ResourceType): THREE.Object3D {
-  if (type === "wood") {
-    const group = new THREE.Group();
-    const trunk = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.15, 0.2, 1.4, 6),
-      new THREE.MeshStandardMaterial({ color: 0x5c4326 }),
-    );
-    trunk.position.y = 0.7;
-    group.add(trunk);
-    const foliage = new THREE.Mesh(
-      new THREE.ConeGeometry(0.9, 1.8, 8),
-      new THREE.MeshStandardMaterial({ color: 0x2f6b3a }),
-    );
-    foliage.position.y = 2.1;
-    group.add(foliage);
-    return group;
-  }
-  if (type === "stone") {
-    return new THREE.Mesh(
-      new THREE.DodecahedronGeometry(0.5, 0),
-      new THREE.MeshStandardMaterial({ color: 0x8a8378 }),
-    );
-  }
-  const bush = new THREE.Mesh(
-    new THREE.SphereGeometry(0.42, 8, 6),
-    new THREE.MeshStandardMaterial({ color: 0x4a7c3f }),
-  );
-  bush.scale.y = 0.75;
-  bush.position.y = 0.3;
-  return bush;
-}
-
-/**
- * A tiny standalone resource patch feeding the camp's own villagers —
- * separate from the player's map-wide ResourceManager (whose clusters sit
- * within ~42 units of the player's spawn, nowhere near this camp) so the
- * two economies don't have to fight over placement or instancing capacity.
- * Satisfies GatherSource, so Villager needs no camp-specific code at all.
- */
-class LocalResourcePatch implements GatherSource {
-  private nodes: ResourceNode[] = [];
-
-  constructor(scene: THREE.Scene, center: THREE.Vector3) {
-    for (const spot of PATCH_SPOTS) {
-      const x = center.x + spot.x;
-      const z = center.z + spot.z;
-      const position = new THREE.Vector3(x, heightAt(x, z), z);
-      const mesh = createPatchNodeMesh(spot.type);
-      mesh.position.copy(position);
-      scene.add(mesh);
-      this.nodes.push({
-        type: spot.type,
-        position,
-        mesh,
-        depleted: false,
-        respawnAt: 0,
-        reserved: false,
-      });
-    }
-  }
-
-  findNearestAvailable(from: THREE.Vector3, maxDist: number): ResourceNode | null {
-    let nearest: ResourceNode | null = null;
-    let nearestDist = maxDist;
-    for (const node of this.nodes) {
-      if (node.depleted || node.reserved) continue;
-      const dist = from.distanceTo(node.position);
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearest = node;
-      }
-    }
-    return nearest;
-  }
-
-  reserve(node: ResourceNode) {
-    node.reserved = true;
-  }
-
-  release(node: ResourceNode) {
-    node.reserved = false;
-  }
-
-  gather(node: ResourceNode): ResourceType {
-    node.depleted = true;
-    node.reserved = false;
-    node.mesh.visible = false;
-    node.respawnAt = performance.now() / 1000 + PATCH_RESPAWN_SECONDS;
-    return node.type;
-  }
-
-  update() {
-    const now = performance.now() / 1000;
-    for (const node of this.nodes) {
-      if (node.depleted && now >= node.respawnAt) {
-        node.depleted = false;
-        node.mesh.visible = true;
-      }
-    }
-  }
 }
 
 // --- The camp itself ---------------------------------------------------------
@@ -429,14 +323,15 @@ export interface EnemyCamp {
   center: THREE.Vector3;
   /** Seconds remaining until the next raid attempt; exposed for the HUD. */
   raidTimer: number;
-  /** The camp's own gather source, feeding its villagers — not part of the
-   * player's map-wide ResourceManager. Internal to this module's update
-   * loop; main.ts never needs to touch it directly. */
-  resourcePatch: GatherSource;
+  /** What camp villagers gather from — the same shared, map-wide
+   * ResourceManager the player draws from (see createEnemyCamp), so both
+   * economies compete for an equivalent resource field rather than the AI
+   * running on its own separate, smaller patch. */
+  gatherSource: GatherSource;
 }
 
 function spawnCampVillager(camp: EnemyCamp, at: THREE.Vector3, scene: THREE.Scene): Villager {
-  const villager = new Villager(scene, at, camp.resourcePatch, camp.townBuildings, camp.inventory, () => 0, (site, delta) => {
+  const villager = new Villager(scene, at, camp.gatherSource, camp.townBuildings, camp.inventory, () => 0, (site, delta) => {
     const building = site as PlacedBuilding;
     const completed = contributeBuild(building, delta);
     setConstructionAppearance(building.mesh, building.buildProgress);
@@ -461,10 +356,15 @@ function spawnCampGuard(at: THREE.Vector3, scene: THREE.Scene, effects: Effects)
 }
 
 /** Builds one fixed hostile camp: a tower and two huts guarded by a few
- * melee guards, plus its own small economy (villagers, resource patch,
- * inventory) that grows the camp over time by actually gathering and
- * building — not a scripted/timed expansion. */
-export function createEnemyCamp(scene: THREE.Scene, center: THREE.Vector3, effects: Effects): EnemyCamp {
+ * melee guards, plus its own small economy (villagers, an equal share of the
+ * map's resources, inventory) that grows the camp over time by actually
+ * gathering and building — not a scripted/timed expansion. */
+export function createEnemyCamp(
+  scene: THREE.Scene,
+  center: THREE.Vector3,
+  effects: Effects,
+  gatherSource: GatherSource,
+): EnemyCamp {
   const inventory = new Inventory();
   const buildManager = new BuildManager(inventory);
   const townBuildings = new TownBuildings();
@@ -482,8 +382,6 @@ export function createEnemyCamp(scene: THREE.Scene, center: THREE.Vector3, effec
     buildManager.grant(spot.id);
   }
 
-  const patch = new LocalResourcePatch(scene, center);
-
   const camp: EnemyCamp = {
     townBuildings,
     inventory,
@@ -492,7 +390,7 @@ export function createEnemyCamp(scene: THREE.Scene, center: THREE.Vector3, effec
     guards: [],
     center: center.clone(),
     raidTimer: RAID_INTERVAL,
-    resourcePatch: patch,
+    gatherSource,
   };
 
   for (let i = 0; i < 3; i++) {
@@ -605,7 +503,9 @@ export function updateEnemyCamp(
   playerTownBuildings: TownBuildings,
   damagePlayerBuilding: (building: PlacedBuilding, amount: number) => void,
 ) {
-  camp.resourcePatch.update();
+  // camp.gatherSource is the same ResourceManager the player uses, and
+  // main.ts already ticks its respawn timers once per frame — no need to
+  // do it again here.
 
   for (const villager of camp.villagers) villager.update(delta, now);
   camp.villagers = camp.villagers.filter((v) => {

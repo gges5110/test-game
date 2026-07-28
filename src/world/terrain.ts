@@ -6,6 +6,74 @@ export const WORLD_SIZE = 400;
 const SEGMENTS = 200;
 const SEED = 1337;
 
+/** The enemy camp's map position — exported so the terrain (valley
+ * flattening) and the resource field (cluster placement) both treat it as a
+ * second base symmetric with the player's spawn at the origin, instead of
+ * only ever flattening/clustering around (0,0). */
+export const ENEMY_CAMP_XZ: [number, number] = [64, 46];
+
+/** Lakes: real obstacles, not just scenery — no building may be placed on
+ * one, and units steer around them rather than walking through. Placed just
+ * outside both bases' resource-cluster rings (12-42 units out) so they don't
+ * collide with wood/stone/food placement, but close enough to actually be
+ * stumbled across while exploring or expanding, not hidden off in a corner. */
+interface WaterFeature {
+  center: [number, number];
+  radius: number;
+  depth: number;
+}
+const WATER_FEATURES: WaterFeature[] = [
+  { center: [-55, -25], radius: 26, depth: 7 },
+  { center: [32, -62], radius: 15, depth: 5 },
+];
+export const WATER_LEVEL = -3;
+
+/** True if (x, z) sits inside any lake — used to keep building placement off
+ * the water. */
+export function isWater(x: number, z: number): boolean {
+  return WATER_FEATURES.some(
+    (lake) => Math.hypot(x - lake.center[0], z - lake.center[1]) < lake.radius,
+  );
+}
+
+/**
+ * Steers a movement direction around any lake the next step would enter,
+ * instead of just refusing to move — units flow around the shore rather than
+ * pooling at the edge. Simple circular-obstacle avoidance (deflect to the
+ * tangent that best keeps the original heading) rather than full pathfinding,
+ * which is enough given every water feature here is a plain circle.
+ */
+export function avoidWaterDirection(
+  x: number,
+  z: number,
+  dirX: number,
+  dirZ: number,
+  lookahead: number,
+): { x: number; z: number } {
+  for (const lake of WATER_FEATURES) {
+    const toCenterX = lake.center[0] - x;
+    const toCenterZ = lake.center[1] - z;
+    const distToCenter = Math.hypot(toCenterX, toCenterZ);
+    if (distToCenter > lake.radius + lookahead + 2) continue;
+
+    const aheadX = x + dirX * lookahead;
+    const aheadZ = z + dirZ * lookahead;
+    const clearance = lake.radius + 0.5;
+    if (Math.hypot(aheadX - lake.center[0], aheadZ - lake.center[1]) >= clearance) continue;
+
+    const nx = toCenterX / (distToCenter || 1);
+    const nz = toCenterZ / (distToCenter || 1);
+    // Two tangents to the circle; keep whichever stays closer to the
+    // original heading so units don't flip-flop frame to frame.
+    const tangentAX = -nz, tangentAZ = nx;
+    const tangentBX = nz, tangentBZ = -nx;
+    const dotA = tangentAX * dirX + tangentAZ * dirZ;
+    const dotB = tangentBX * dirX + tangentBZ * dirZ;
+    return dotA >= dotB ? { x: tangentAX, z: tangentAZ } : { x: tangentBX, z: tangentBZ };
+  }
+  return { x: dirX, z: dirZ };
+}
+
 // Mulberry32 PRNG so the seed is reproducible without extra deps.
 function mulberry32(seed: number) {
   let a = seed;
@@ -23,21 +91,34 @@ const noise2D = createNoise2D(rng);
 
 /**
  * Layered noise: broad rolling hills + finer detail, with a flattened
- * starting valley near the origin so spawn isn't on a slope.
+ * starting valley around each base (the player's spawn and, symmetrically,
+ * the enemy camp) so neither sits on a slope — everywhere else gets to be
+ * properly hilly instead of reading as flat and empty.
  */
 export function heightAt(x: number, z: number): number {
   const nx = x / WORLD_SIZE;
   const nz = z / WORLD_SIZE;
 
   let h = 0;
-  h += noise2D(nx * 1.5, nz * 1.5) * 10;
-  h += noise2D(nx * 4, nz * 4) * 3;
-  h += noise2D(nx * 10, nz * 10) * 0.8;
+  h += noise2D(nx * 1.2, nz * 1.2) * 16;
+  h += noise2D(nx * 3, nz * 3) * 6;
+  h += noise2D(nx * 8, nz * 8) * 1.4;
 
-  // Flatten a valley around spawn (origin).
-  const distFromSpawn = Math.sqrt(x * x + z * z);
-  const valleyFalloff = THREE.MathUtils.smoothstep(distFromSpawn, 15, 60);
+  // Flatten a valley around whichever base (player or enemy camp) is nearer.
+  const distFromPlayer = Math.hypot(x, z);
+  const distFromCamp = Math.hypot(x - ENEMY_CAMP_XZ[0], z - ENEMY_CAMP_XZ[1]);
+  const distFromNearestBase = Math.min(distFromPlayer, distFromCamp);
+  const valleyFalloff = THREE.MathUtils.smoothstep(distFromNearestBase, 15, 60);
   h *= valleyFalloff;
+
+  // Carve each lake's basin — landmark dips, masked by flat water planes
+  // added in createWorld().
+  for (const lake of WATER_FEATURES) {
+    const distFromLake = Math.hypot(x - lake.center[0], z - lake.center[1]);
+    const lakeDip =
+      (1 - THREE.MathUtils.smoothstep(distFromLake, lake.radius * 0.55, lake.radius)) * lake.depth;
+    h -= lakeDip;
+  }
 
   return h;
 }
@@ -116,4 +197,30 @@ export function createTerrain(): THREE.Mesh {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.receiveShadow = true;
   return mesh;
+}
+
+/** A flat, semi-transparent disc sitting at WATER_LEVEL over one lake's basin
+ * carved into heightAt — purely decorative, no collision. */
+function createWaterPlane(lake: WaterFeature): THREE.Mesh {
+  const geometry = new THREE.CircleGeometry(lake.radius * 0.98, 48);
+  geometry.rotateX(-Math.PI / 2);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x2f6f8a,
+    transparent: true,
+    opacity: 0.85,
+    roughness: 0.15,
+    metalness: 0.1,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(lake.center[0], WATER_LEVEL, lake.center[1]);
+  return mesh;
+}
+
+/** Terrain mesh plus a water plane per lake, grouped so main.ts can add
+ * everything with a single scene.add() the same way it always has. */
+export function createWorld(): THREE.Group {
+  const group = new THREE.Group();
+  group.add(createTerrain());
+  for (const lake of WATER_FEATURES) group.add(createWaterPlane(lake));
+  return group;
 }

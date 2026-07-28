@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { BuildingDef } from "./building";
 import type { UnitKind } from "../world/soldier";
 import type { ResourceType } from "../world/resources";
+import type { Villager, GarrisonSite } from "../world/villager";
 
 export interface PlacedBuilding {
   id: number;
@@ -28,6 +29,8 @@ export interface PlacedBuilding {
   onDestroyed?: () => void;
   /** Where newly trained units head off to, if set — a training building only. */
   rallyPoint?: THREE.Vector3;
+  /** Villagers currently hiding inside, if this is a Town Center or Castle. */
+  garrison: Villager[];
 }
 
 let nextId = 1;
@@ -53,6 +56,7 @@ export class TownBuildings {
       underConstruction: false,
       buildProgress: 1,
       queue: [],
+      garrison: [],
     };
     this.list.push(building);
     return building;
@@ -62,7 +66,27 @@ export class TownBuildings {
     scene.remove(building.mesh);
     const idx = this.list.indexOf(building);
     if (idx >= 0) this.list.splice(idx, 1);
+    // Garrisoned villagers don't die with the building — they pop back out
+    // where they were hiding, same as any other interrupted job.
+    for (const v of building.garrison) v.forceIdle();
+    building.garrison = [];
     building.onDestroyed?.();
+  }
+
+  /** Structural GarrisonSite for a specific building, so Villager can command
+   * itself in/out without knowing about PlacedBuilding or TownBuildings. */
+  garrisonSiteFor(building: PlacedBuilding): GarrisonSite {
+    return {
+      position: building.position,
+      canGarrison: () =>
+        !building.underConstruction &&
+        !!building.def.garrisonCapacity &&
+        building.garrison.length < building.def.garrisonCapacity,
+      occupy: (villager) => building.garrison.push(villager),
+      release: (villager) => {
+        building.garrison = building.garrison.filter((v) => v !== villager);
+      },
+    };
   }
 
   /** Returns true if this hit destroyed the building. */

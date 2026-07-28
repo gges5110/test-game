@@ -107,6 +107,8 @@ export interface SelectionInfo {
 export class Hud {
   private inventoryEl: HTMLElement;
   private settingsMenuEl: HTMLElement;
+  private defeatOverlayEl: HTMLElement;
+  private victoryOverlayEl: HTMLElement;
   private promptEl: HTMLElement;
   private cmdGridEl: HTMLElement;
   private commandsWrapEl: HTMLElement;
@@ -159,6 +161,20 @@ export class Hud {
         <h2>Settings <button class="menu-close">✕</button></h2>
         <button class="settings-action" id="resetBtn">🔄 Reset Town</button>
       </div>
+      <div class="defeat-overlay" hidden>
+        <div class="defeat-panel">
+          <h1>💀 Your Town Has Fallen</h1>
+          <p>Every villager, soldier, and building is gone.</p>
+          <button class="defeat-restart">🔄 Start Over</button>
+        </div>
+      </div>
+      <div class="victory-overlay" hidden>
+        <div class="victory-panel">
+          <h1>🎉 Enemy Camp Destroyed</h1>
+          <p>Every enemy villager, guard, and building is gone. Your town stands.</p>
+          <button class="victory-continue">Keep Playing</button>
+        </div>
+      </div>
       <div class="prompt" hidden></div>
       <div class="select-box" hidden></div>
 
@@ -181,6 +197,8 @@ export class Hud {
     `;
     this.inventoryEl = root.querySelector(".inventory")!;
     this.settingsMenuEl = root.querySelector(".settings-menu")!;
+    this.defeatOverlayEl = root.querySelector(".defeat-overlay")!;
+    this.victoryOverlayEl = root.querySelector(".victory-overlay")!;
     this.promptEl = root.querySelector(".prompt")!;
     this.cmdGridEl = root.querySelector(".cmd-grid")!;
     this.commandsWrapEl = root.querySelector(".aoe-commands")!;
@@ -269,6 +287,12 @@ export class Hud {
         this.onReset();
       }
     });
+    this.defeatOverlayEl
+      .querySelector(".defeat-restart")!
+      .addEventListener("click", () => this.onReset());
+    this.victoryOverlayEl
+      .querySelector(".victory-continue")!
+      .addEventListener("click", () => this.setVictory(false));
     root.querySelector("#settingsBtn")!.addEventListener("click", () => this.toggleSettingsMenu());
     this.settingsMenuEl.querySelector(".menu-close")!.addEventListener("click", () => this.toggleSettingsMenu());
 
@@ -309,6 +333,18 @@ export class Hud {
 
   setOnReset(handler: () => void) {
     this.onReset = handler;
+  }
+
+  /** Shows (or hides) the full-screen defeat overlay — its own restart
+   * button reuses the same reset handler as the settings menu's. */
+  setDefeated(defeated: boolean) {
+    this.defeatOverlayEl.hidden = !defeated;
+  }
+
+  /** Shows (or dismisses) the victory overlay — dismissing just hides it and
+   * lets the player keep playing, no reset involved. */
+  setVictory(victory: boolean) {
+    this.victoryOverlayEl.hidden = !victory;
   }
 
   setOnCancelPlacement(handler: () => void) {

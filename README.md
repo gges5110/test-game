@@ -11,7 +11,7 @@ A browser-based medieval-town RTS built with Three.js. Manage villagers, gather 
 - **Left-click** — select a villager or building
 - **Left-drag** — box-select multiple villagers
 - **Double-click** a villager or soldier — select every unit of that same kind currently on screen
-- **Right-click** (or tap, on mobile) — command selected villagers: move to a point, or gather a resource node
+- **Right-click** (or tap, on mobile) — command selected villagers: move to a point, gather a resource node, or garrison inside a Town Center/Castle
 - **Right-click ground** (with a Town Center/Barracks/Archery Range/Stable selected instead of units) — set its rally point; newly trained units head straight there
 - **B** — with a villager selected, jump to Build ▸ Economic
 - **M** — with a villager selected, jump to Build ▸ Military
@@ -20,12 +20,15 @@ A browser-based medieval-town RTS built with Three.js. Manage villagers, gather 
 
 ## Gameplay
 
-- Villagers automatically seek nearby resource nodes (wood, stone, food) when idle, or can be directly commanded. Nothing produces resources on its own (AoE2-style) — every load is gathered and physically carried back by a villager.
+- Villagers automatically seek nearby resource nodes (wood, stone, food) when idle, or can be directly commanded. Right-clicking a resource node, or picking "Gather Wood/Stone/Food" from a selected villager's command grid, sticks that villager to the chosen resource type — it keeps hunting for more of the same when idle instead of drifting to whatever's nearest, until you move it or reassign it. Nothing produces resources on its own (AoE2-style) — every load is gathered and physically carried back by a villager.
 - A load has to be dropped off at a Town Center, or the matching specialized building: a Lumber Camp for wood, a Mining Camp for stone, a Mill for food. Villagers automatically walk to whichever qualifying building is nearest when they finish gathering, so placing camps near your resources cuts down on walking. Farms are a plantable food node villagers gather from just like a berry bush or tree — not a passive income source — so they still need a Mill or Town Center nearby to drop food off at.
 - The Build ▸ Economic/Military menu places Houses (+5 population capacity), Farms, a Blacksmith, Barracks/Archery Range/Stable (train soldiers), Outposts and Castles (auto-attack nearby enemies), and more Town Centers (also +5 capacity, and trains Villagers).
+- Villagers can garrison inside a Town Center or Castle — right-click it with villagers selected to send them in. Garrisoned villagers are hidden and safe from attack, and a garrisoned Town Center (which has no attack of its own otherwise) gains one, scaling with how many are sheltering inside. Select the building and use Ungarrison to send them all back out, or just order them elsewhere.
 - Population is capped at 200 and gated by housing — Town Centers and Houses each add capacity, and training pauses once you're at the limit until more housing (or losses) free up room.
-- A fixed enemy camp sits a distance away, starting with the same Town Center + 3 villagers as the player, and running the same economy loop: its own villagers gather from a small local resource patch and build up its own houses/barracks/towers over time. Its guards patrol the camp and periodically raid the player's town — attack the camp to slow its growth, or let it grow and come to you. Click an enemy guard or villager to inspect its stats (view-only — no commands, and never more than one at a time).
+- A fixed enemy camp sits a distance away, starting with the same Town Center + 3 villagers as the player, and running the same economy loop: its own villagers draw from the same map-wide resource field the player does (an equal, symmetric share of wood/stone/food clusters, not a smaller separate patch) and build up its own houses/barracks/towers over time. Its guards patrol the camp and periodically raid the player's town — attack the camp to slow its growth, or let it grow and come to you. Click an enemy guard or villager to inspect its stats (view-only — no commands, and never more than one at a time).
+- The map itself has properly rolling hills (flattened only in a valley around each base) and a couple of lakes just past the resource clusters. Lakes are real obstacles: buildings can't be placed on one, and units steer around the shore instead of walking through.
 - Progress autosaves to `localStorage` (and on tab close/hide), so reloading resumes your town. Use the reset button in the HUD to wipe the save and start over.
+- You lose the moment you have no buildings, villagers, or soldiers left — AoE2's own defeat rule. A full-screen "Your Town Has Fallen" overlay appears with a one-click restart. You win by eliminating the enemy camp the same way — no buildings, villagers, or guards left on their side — which shows a dismissable "Enemy Camp Destroyed" overlay and lets you keep playing.
 
 ## Development
 

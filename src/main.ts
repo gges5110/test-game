@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import Stats from "stats.js";
-import { createTerrain, heightAt, WORLD_SIZE } from "./world/terrain";
+import { createWorld, heightAt, WORLD_SIZE, ENEMY_CAMP_XZ, isWater } from "./world/terrain";
 import { ResourceManager, type ResourceType } from "./world/resources";
 import {
   createBuildingMesh,
@@ -106,11 +106,23 @@ if (import.meta.env.DEV) {
 
 const clock = new THREE.Clock();
 
-const terrain = createTerrain();
+const terrain = createWorld();
 scene.add(terrain);
 
 createLighting(scene);
-const resources = new ResourceManager(scene);
+
+const PLAYER_SPAWN = new THREE.Vector3(0, 0, 0);
+// A single fixed hostile camp to attack — far enough out that reaching it
+// feels like an expedition, not something you stumble into while gathering.
+// Its position is terrain.ts's ENEMY_CAMP_XZ, so the valley flattening there
+// and the resource-cluster placement below always agree on where it is.
+const ENEMY_CAMP_CENTER = new THREE.Vector3(ENEMY_CAMP_XZ[0], 0, ENEMY_CAMP_XZ[1]);
+ENEMY_CAMP_CENTER.y = heightAt(ENEMY_CAMP_CENTER.x, ENEMY_CAMP_CENTER.z);
+
+// Both bases get an equal, symmetric share of the map's resource clusters —
+// the enemy camp draws from the same field the player does, not a separate
+// smaller patch of its own.
+const resources = new ResourceManager(scene, [PLAYER_SPAWN, ENEMY_CAMP_CENTER]);
 
 const inventory = new Inventory();
 const buildManager = new BuildManager(inventory);
@@ -119,12 +131,7 @@ const hud = new Hud(hudRoot, inventory);
 const townBuildings = new TownBuildings();
 const effects = new Effects(scene);
 
-// A single fixed hostile camp to attack — placed well beyond the resource
-// clusters (which top out ~42 units from spawn) so reaching it feels like an
-// expedition, not something you stumble into while gathering.
-const ENEMY_CAMP_CENTER = new THREE.Vector3(64, 0, 46);
-ENEMY_CAMP_CENTER.y = heightAt(ENEMY_CAMP_CENTER.x, ENEMY_CAMP_CENTER.z);
-const enemyCamp: EnemyCamp = createEnemyCamp(scene, ENEMY_CAMP_CENTER, effects);
+const enemyCamp: EnemyCamp = createEnemyCamp(scene, ENEMY_CAMP_CENTER, effects, resources);
 
 function gatherBonus(type: Parameters<typeof crafting.gatherBonus>[0]) {
   return crafting.gatherBonus(type);
@@ -570,6 +577,8 @@ function buildingCommand(def: BuildingDef): CommandButton {
 }
 
 /** Commands a villager offers: AoE2's Build ▸ Economic / Military pages. */
+const GATHER_TYPES: ResourceType[] = ["wood", "stone", "food"];
+
 function villagerCommands(): CommandButton[] {
   return [
     {
@@ -586,6 +595,16 @@ function villagerCommands(): CommandButton[] {
       tooltip: "Military buildings",
       children: MILITARY_BUILDINGS.map((id) => buildingCommand(getBuildingDef(id))),
     },
+    ...GATHER_TYPES.map(
+      (type): CommandButton => ({
+        icon: RESOURCE_ICON[type],
+        label: `Gather ${type[0].toUpperCase()}${type.slice(1)}`,
+        tooltip: `Keep gathering ${type} whenever idle, until moved or reassigned`,
+        onClick: () => {
+          for (const v of selectedVillagers) v.commandGatherType(type);
+        },
+      }),
+    ),
   ];
 }
 
@@ -611,6 +630,18 @@ function buildingCommands(building: PlacedBuilding): CommandButton[] {
           ? `Queue is full (${MAX_QUEUE})`
           : `Train ${unitLabel(trains.unit)} — ${trains.foodCost} food, charged now`,
       onClick: () => enqueueUnit(building, inventory),
+    });
+  }
+
+  if (def.garrisonCapacity && building.garrison.length > 0) {
+    commands.push({
+      icon: "🚪",
+      label: "Ungarrison",
+      sub: `${building.garrison.length}/${def.garrisonCapacity}`,
+      tooltip: `Send all ${building.garrison.length} sheltering villagers back out`,
+      onClick: () => {
+        for (const v of [...building.garrison]) v.forceIdle();
+      },
     });
   }
 
@@ -702,6 +733,17 @@ function buildSelectionInfo(): SelectionInfo | null {
         "📦 Drop-off",
         def.dropOff === "any" ? "Any resource" : `${RESOURCE_ICON[def.dropOff]} ${def.dropOff}`,
       ]);
+    }
+    if (def.garrisonCapacity) {
+      stats.push(["🏠 Garrison", `${building.garrison.length}/${def.garrisonCapacity} — right-click with villagers selected`]);
+      if (def.garrisonAttack) {
+        stats.push([
+          "⚔️ Garrison attack",
+          building.garrison.length > 0
+            ? `${def.garrisonAttack.damagePerVillager * building.garrison.length} dmg, range ${def.garrisonAttack.range}`
+            : "None while empty",
+        ]);
+      }
     }
 
     const trains = def.trains;
@@ -807,6 +849,7 @@ function buildSelectionInfo(): SelectionInfo | null {
   // Exactly one unit: attributes genuinely describe it.
   const kind = distinctKinds[0];
   if (kind === "villager") {
+    const assignment = selectedVillagers[0].gatherAssignment;
     return {
       key: selectedSelectionKey(),
       title: "Villager",
@@ -815,6 +858,9 @@ function buildSelectionInfo(): SelectionInfo | null {
         "Gathers wood, stone, and food. Right-click ground to move, or a resource to gather.",
       hp: selectedVillagers[0].hp,
       maxHp: VILLAGER_MAX_HP,
+      stats: [
+        ["🎯 Assigned", assignment ? `${RESOURCE_ICON[assignment]} ${assignment}` : "Any"],
+      ],
       commands: villagerCommands(),
     };
   }
@@ -909,6 +955,7 @@ function confirmPlacement() {
   if (!selectedBuildingType || !ghost) return;
   if (townBuildings.isTooCloseToAny(ghost.position, MIN_BUILDING_SPACING))
     return;
+  if (isWater(ghost.position.x, ghost.position.z)) return;
   const buildingType = selectedBuildingType;
   if (!buildManager.build(buildingType)) return;
 
@@ -1031,6 +1078,23 @@ function commandSelectedUnits(sx: number, sy: number) {
     }
   }
 
+  // Right-clicking a Town Center/Castle sends villagers to hide inside it —
+  // AoE2's garrison. A garrisoned Town Center also gains an auto-attack.
+  if (selectedVillagers.length > 0) {
+    const garrisonable = townBuildings.list.filter(
+      (b) => !b.underConstruction && b.def.garrisonCapacity,
+    );
+    const garrisonHit = rtsCamera.raycastObjects(sx, sy, garrisonable.map((b) => b.mesh));
+    if (garrisonHit) {
+      const building = resolveBuildingFromHit(garrisonHit);
+      if (building) {
+        const site = townBuildings.garrisonSiteFor(building);
+        for (const v of selectedVillagers) v.commandGarrison(site);
+        return;
+      }
+    }
+  }
+
   // Right-clicking a resource is a gather order for any selected villagers.
   if (selectedVillagers.length > 0) {
     const nodeMeshes = resources.nodes
@@ -1106,7 +1170,7 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
   const villagerHit = rtsCamera.raycastObjects(
     sx,
     sy,
-    villagers.map((v) => v.model),
+    villagers.filter((v) => !v.isGarrisoned).map((v) => v.model),
   );
   if (villagerHit) {
     const villager = resolveVillagerFromHit(villagerHit);
@@ -1114,7 +1178,10 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
       const now = performance.now();
       if (!isTouch && lastUnitClick?.unit === villager && now - lastUnitClick.time < DOUBLE_CLICK_MS) {
         lastUnitClick = null;
-        selectUnits(villagers.filter((v) => v.alive && isOnScreen(v.model.position)), []);
+        selectUnits(
+          villagers.filter((v) => v.alive && !v.isGarrisoned && isOnScreen(v.model.position)),
+          [],
+        );
       } else {
         lastUnitClick = { unit: villager, time: now };
         selectUnits([villager], []);
@@ -1218,7 +1285,7 @@ rtsCamera.setOnBoxSelect((rect, final) => {
     const p = rtsCamera.worldToScreen(pos);
     return p !== null && p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2;
   };
-  const villagerHits = villagers.filter((v) => inBox(v.model.position));
+  const villagerHits = villagers.filter((v) => !v.isGarrisoned && inBox(v.model.position));
   const soldierHits = soldiers.filter((s) => inBox(s.model.position));
   hud.setSelectionBox(null);
   if (villagerHits.length > 0 || soldierHits.length > 0) {
@@ -1281,6 +1348,18 @@ function collectSaveData(): SaveData {
 // just-cleared save before the fresh page load reads it.
 let resetting = false;
 
+/** True once the player has nothing left — no buildings, villagers, or
+ * soldiers — mirroring AoE2's own defeat rule ("no units and no buildings").
+ * Checked once per frame in animate(), after that frame's deaths/destructions
+ * have already been applied. */
+let defeated = false;
+
+/** True once the enemy camp has nothing left — the mirror image of
+ * `defeated`, checked the same way. Doesn't end the game (there's nothing to
+ * reset), just flags the win and stays true even if the camp somehow gets
+ * buildings back later (there's no path for that today). */
+let victorious = false;
+
 const AUTOSAVE_INTERVAL_MS = 5000;
 setInterval(() => {
   if (!resetting) saveGame(collectSaveData());
@@ -1335,7 +1414,16 @@ function animate() {
     return true;
   });
 
-  updateEnemyCamp(enemyCamp, scene, effects, delta, time, [...soldiers, ...villagers], townBuildings, damageBuilding);
+  updateEnemyCamp(
+    enemyCamp,
+    scene,
+    effects,
+    delta,
+    time,
+    [...soldiers, ...villagers.filter((v) => !v.isGarrisoned)],
+    townBuildings,
+    damageBuilding,
+  );
   if (selectedEnemyUnit && !selectedEnemyUnit.alive) {
     deselectEnemyUnit();
   }
@@ -1359,25 +1447,34 @@ function animate() {
     const bar = building.mesh.userData.healthBar as HealthBar | undefined;
     bar?.setFraction(building.hp / building.maxHp);
 
-    if (
-      building.def.attack &&
-      !building.underConstruction &&
-      time >= building.attackReadyAt
-    ) {
-      const { range, damage, cooldown } = building.def.attack;
-      const target = enemyCamp.guards.find(
-        (g) => g.alive && g.model.position.distanceTo(building.position) <= range,
+    if (building.underConstruction || time < building.attackReadyAt) continue;
+
+    // A Town Center has no attack of its own — garrisoned villagers arm it,
+    // AoE2-style, with damage scaling by how many are sheltering inside. A
+    // Castle's own `attack` always applies regardless of garrison.
+    const atk = building.def.attack
+      ? building.def.attack
+      : building.def.garrisonAttack && building.garrison.length > 0
+        ? {
+            range: building.def.garrisonAttack.range,
+            damage: building.def.garrisonAttack.damagePerVillager * building.garrison.length,
+            cooldown: building.def.garrisonAttack.cooldown,
+          }
+        : null;
+    if (!atk) continue;
+
+    const target = enemyCamp.guards.find(
+      (g) => g.alive && g.model.position.distanceTo(building.position) <= atk.range,
+    );
+    if (target) {
+      target.takeDamage(atk.damage);
+      building.attackReadyAt = time + atk.cooldown;
+      effects.fireArrow(
+        building.position
+          .clone()
+          .add(new THREE.Vector3(0, building.def.attackOriginY ?? 2, 0)),
+        target.model.position.clone().add(new THREE.Vector3(0, 0.4, 0)),
       );
-      if (target) {
-        target.takeDamage(damage);
-        building.attackReadyAt = time + cooldown;
-        effects.fireArrow(
-          building.position
-            .clone()
-            .add(new THREE.Vector3(0, building.def.attackOriginY ?? 2, 0)),
-          target.model.position.clone().add(new THREE.Vector3(0, 0.4, 0)),
-        );
-      }
     }
   }
 
@@ -1393,6 +1490,7 @@ function animate() {
     minimapPoints.push({ x: b.position.x, z: b.position.z, color: "#e8dcc0", size: 6 });
   }
   for (const v of villagers) {
+    if (v.isGarrisoned) continue;
     minimapPoints.push({ x: v.model.position.x, z: v.model.position.z, color: "#6fe3ff", size: 3 });
   }
   for (const s of soldiers) {
@@ -1421,10 +1519,29 @@ function animate() {
       MIN_BUILDING_SPACING,
     )
       ? "Too close to another building — move elsewhere"
-      : `Click (or tap ✓) to place ${selectedBuildingType.name} — hold Shift to queue another`;
+      : isWater(ghost.position.x, ghost.position.z)
+        ? "Can't build on water — move elsewhere"
+        : `Click (or tap ✓) to place ${selectedBuildingType.name} — hold Shift to queue another`;
   }
   hud.setPrompt(placementPrompt);
   hud.setSelectionInfo(buildSelectionInfo());
+
+  if (!defeated && townBuildings.list.length === 0 && villagers.length === 0 && soldiers.length === 0) {
+    defeated = true;
+    cancelPlacement();
+    deselectAll();
+    hud.setDefeated(true);
+  }
+
+  if (
+    !victorious &&
+    enemyCamp.townBuildings.list.length === 0 &&
+    enemyCamp.villagers.length === 0 &&
+    enemyCamp.guards.length === 0
+  ) {
+    victorious = true;
+    hud.setVictory(true);
+  }
 
   composer.render();
   stats.end();

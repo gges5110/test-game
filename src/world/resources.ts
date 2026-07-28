@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { heightAt } from "./terrain";
+import { heightAt, isWater } from "./terrain";
 
 export type ResourceType = "wood" | "stone" | "food";
 
@@ -23,7 +23,11 @@ export interface ResourceNode {
  * both economies reuse the exact same unit.
  */
 export interface GatherSource {
-  findNearestAvailable(from: THREE.Vector3, maxDist: number): ResourceNode | null;
+  findNearestAvailable(
+    from: THREE.Vector3,
+    maxDist: number,
+    type?: ResourceType,
+  ): ResourceNode | null;
   reserve(node: ResourceNode): void;
   release(node: ResourceNode): void;
   gather(node: ResourceNode): ResourceType;
@@ -179,14 +183,23 @@ export class ResourceManager {
   private instanceRefs = new Map<ResourceNode, InstanceRef[]>();
   private scene: THREE.Scene;
 
-  constructor(scene: THREE.Scene) {
+  /**
+   * `bases` are the points clusters get built around — the player's spawn
+   * and (symmetrically) the enemy camp, by default just the player. Splitting
+   * the same per-type cluster/node budget evenly across every base means
+   * each side gets an equal, equivalent resource field instead of the AI
+   * economy running on a separate, smaller patch.
+   */
+  constructor(scene: THREE.Scene, bases: THREE.Vector3[] = [new THREE.Vector3(0, 0, 0)]) {
     this.scene = scene;
-    this.placeNodes();
+    this.placeNodes(bases);
   }
 
-  private placeNodes() {
+  private placeNodes(bases: THREE.Vector3[]) {
     const rng = mulberry32(PLACEMENT_SEED);
     const types: ResourceType[] = ["wood", "stone", "food"];
+    const clustersPerBase = Math.max(1, Math.round(CLUSTERS_PER_TYPE / bases.length));
+    const nodesPerBase = Math.round(NODE_COUNT_PER_TYPE / bases.length);
 
     // Positions first, so each type's InstancedMeshes can be sized exactly.
     const positionsByType: Record<ResourceType, THREE.Vector3[]> = {
@@ -196,40 +209,45 @@ export class ResourceManager {
     };
 
     for (const type of types) {
-      const nodesPerCluster = Math.ceil(NODE_COUNT_PER_TYPE / CLUSTERS_PER_TYPE);
-      let placed = 0;
+      const nodesPerCluster = Math.ceil(nodesPerBase / clustersPerBase);
 
-      for (let c = 0; c < CLUSTERS_PER_TYPE && placed < NODE_COUNT_PER_TYPE; c++) {
-        const centerAngle = rng() * Math.PI * 2;
-        const centerDist =
-          MIN_CLUSTER_DIST_FROM_SPAWN +
-          rng() * (MAX_CLUSTER_DIST_FROM_SPAWN - MIN_CLUSTER_DIST_FROM_SPAWN);
-        const cx = Math.cos(centerAngle) * centerDist;
-        const cz = Math.sin(centerAngle) * centerDist;
+      for (const base of bases) {
+        let placed = 0;
 
-        let clusterPlaced = 0;
-        let clusterAttempts = 0;
-        while (
-          clusterPlaced < nodesPerCluster &&
-          placed < NODE_COUNT_PER_TYPE &&
-          clusterAttempts < nodesPerCluster * 15
-        ) {
-          clusterAttempts++;
-          const angle = rng() * Math.PI * 2;
-          const radius = rng() * CLUSTER_RADIUS;
-          const x = cx + Math.cos(angle) * radius;
-          const z = cz + Math.sin(angle) * radius;
-          const distFromSpawn = Math.sqrt(x * x + z * z);
-          if (distFromSpawn < 8) continue; // keep spawn clear
+        for (let c = 0; c < clustersPerBase && placed < nodesPerBase; c++) {
+          const centerAngle = rng() * Math.PI * 2;
+          const centerDist =
+            MIN_CLUSTER_DIST_FROM_SPAWN +
+            rng() * (MAX_CLUSTER_DIST_FROM_SPAWN - MIN_CLUSTER_DIST_FROM_SPAWN);
+          const cx = base.x + Math.cos(centerAngle) * centerDist;
+          const cz = base.z + Math.sin(centerAngle) * centerDist;
 
-          const y = heightAt(x, z);
-          const slope =
-            Math.abs(heightAt(x + 1, z) - y) + Math.abs(heightAt(x, z + 1) - y);
-          if (slope > 0.5) continue; // avoid steep terrain
+          let clusterPlaced = 0;
+          let clusterAttempts = 0;
+          while (
+            clusterPlaced < nodesPerCluster &&
+            placed < nodesPerBase &&
+            clusterAttempts < nodesPerCluster * 15
+          ) {
+            clusterAttempts++;
+            const angle = rng() * Math.PI * 2;
+            const radius = rng() * CLUSTER_RADIUS;
+            const x = cx + Math.cos(angle) * radius;
+            const z = cz + Math.sin(angle) * radius;
+            // Keep every base's own footprint clear, not just the player's.
+            const tooCloseToABase = bases.some((b) => Math.hypot(x - b.x, z - b.z) < 8);
+            if (tooCloseToABase) continue;
+            if (isWater(x, z)) continue;
 
-          positionsByType[type].push(new THREE.Vector3(x, y, z));
-          clusterPlaced++;
-          placed++;
+            const y = heightAt(x, z);
+            const slope =
+              Math.abs(heightAt(x + 1, z) - y) + Math.abs(heightAt(x, z + 1) - y);
+            if (slope > 0.5) continue; // avoid steep terrain
+
+            positionsByType[type].push(new THREE.Vector3(x, y, z));
+            clusterPlaced++;
+            placed++;
+          }
         }
       }
     }
@@ -313,11 +331,16 @@ export class ResourceManager {
   }
 
   /** Nearest non-depleted, unreserved node within range of a point (e.g. a villager's home). */
-  findNearestAvailable(from: THREE.Vector3, maxDist: number): ResourceNode | null {
+  findNearestAvailable(
+    from: THREE.Vector3,
+    maxDist: number,
+    type?: ResourceType,
+  ): ResourceNode | null {
     let nearest: ResourceNode | null = null;
     let nearestDist = maxDist;
     for (const node of this.nodes) {
       if (node.depleted || node.reserved) continue;
+      if (type && node.type !== type) continue;
       const dist = from.distanceTo(node.position);
       if (dist < nearestDist) {
         nearest = node;

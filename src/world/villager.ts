@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { heightAt } from "./terrain";
+import { heightAt, avoidWaterDirection } from "./terrain";
 import type { DropOffFinder, GatherSource, ResourceNode, ResourceType } from "./resources";
 import type { Inventory } from "../systems/inventory";
 import type { Combatant } from "./combatant";
@@ -31,13 +31,26 @@ type State =
   | "toHome"
   | "moving"
   | "toBuild"
-  | "building";
+  | "building"
+  | "toGarrison"
+  | "garrisoned";
 
 /** What a villager needs to know about a construction site. PlacedBuilding
  * satisfies this structurally, without villager.ts depending on it. */
 export interface ConstructionSite {
   position: THREE.Vector3;
   underConstruction: boolean;
+}
+
+/** A building a villager can hide inside — a Town Center or Castle.
+ * TownBuildings hands out one of these per building via garrisonSiteFor(),
+ * closing over its own bookkeeping so Villager never touches PlacedBuilding
+ * directly. */
+export interface GarrisonSite {
+  position: THREE.Vector3;
+  canGarrison(): boolean;
+  occupy(villager: Villager): void;
+  release(villager: Villager): void;
 }
 
 export class Villager implements Combatant {
@@ -59,11 +72,16 @@ export class Villager implements Combatant {
   private buildSite: ConstructionSite | null = null;
   private gatherEndsAt = 0;
   private carrying: ResourceType | null = null;
+  /** Sticky job filter set by the player (e.g. "gather food") — once set, the
+   * villager only picks up nodes of this type when idle, instead of whatever
+   * is nearest, until explicitly moved or reassigned. */
+  private assignedType: ResourceType | null = null;
   /** Where a load is being carried to — the nearest valid drop-off for its
    * type, resolved once on picking it up. Falls back to home if nothing
    * qualifies (shouldn't happen once a Town Center exists, but keeps a
    * villager from getting stuck instead of just walking further than ideal). */
   private dropTarget: THREE.Vector3 | null = null;
+  private garrisonSite: GarrisonSite | null = null;
 
   constructor(
     scene: THREE.Scene,
@@ -111,9 +129,11 @@ export class Villager implements Combatant {
     return this.home.clone();
   }
 
-  /** Player-issued: walk to a point, then resume normal idle behavior. */
+  /** Player-issued: walk to a point, then resume normal idle behavior. Clears
+   * any resource-type assignment — an explicit move is an override. */
   commandMoveTo(point: THREE.Vector3) {
     this.releaseJob();
+    this.assignedType = null;
     this.moveTarget.copy(point);
     this.state = "moving";
   }
@@ -130,17 +150,69 @@ export class Villager implements Combatant {
     this.state = "toBuild";
   }
 
-  /** Player-issued: go gather a specific node, overriding auto job search. */
+  /** Player-issued: walk into a Town Center or Castle and hide there until
+   * moved, reassigned, or the building falls. No-ops if it's already full. */
+  commandGarrison(site: GarrisonSite) {
+    if (!site.canGarrison()) return;
+    this.releaseJob();
+    this.assignedType = null;
+    this.garrisonSite = site;
+    this.state = "toGarrison";
+  }
+
+  /** True while hidden inside a garrison site — safe from attack, but not
+   * doing any work until it comes back out. */
+  get isGarrisoned(): boolean {
+    return this.state === "garrisoned";
+  }
+
+  /** Bails out of whatever this villager is doing — job, build, or garrison
+   * — back to idle where it currently stands. Used when the site it was tied
+   * to (a garrisoned building) is destroyed out from under it. */
+  forceIdle() {
+    this.releaseJob();
+    this.state = "idle";
+  }
+
+  /** Player-issued: go gather a specific node, then keep gathering that
+   * resource type afterward (see assignedType) instead of drifting to
+   * whatever's nearest. */
   commandGather(node: ResourceNode) {
     if (node.depleted) return;
     this.releaseJob();
+    this.assignedType = node.type;
     this.resources.reserve(node);
     this.targetNode = node;
     this.state = "toResource";
   }
 
+  /** Player-issued: stick to gathering `type` whenever idle, until moved or
+   * reassigned — the "keep gathering food" request, independent of any one
+   * node. Immediately looks for a job of that type if currently idle. */
+  commandGatherType(type: ResourceType) {
+    this.releaseJob();
+    this.assignedType = type;
+    if (this.state === "idle" || this.state === "moving") {
+      const node = this.resources.findNearestAvailable(this.home, JOB_SEARCH_RADIUS, type);
+      if (node) {
+        this.resources.reserve(node);
+        this.targetNode = node;
+        this.state = "toResource";
+        return;
+      }
+    }
+    this.state = "idle";
+  }
+
+  /** What this villager is currently assigned to gather, or null if it's
+   * free to pick whatever's nearest — surfaced for the HUD. */
+  get gatherAssignment(): ResourceType | null {
+    return this.assignedType;
+  }
+
   update(delta: number, now: number) {
     if (!this.alive) return;
+    if (this.state === "garrisoned") return; // hidden inside a building; nothing to do
     this.workIndicator.visible =
       this.state === "gathering" || this.state === "building";
     this.carryIndicator.visible = this.carrying !== null;
@@ -162,6 +234,9 @@ export class Villager implements Combatant {
         break;
       case "moving":
         this.updateMoving(delta);
+        break;
+      case "toGarrison":
+        this.updateToGarrison(delta);
         break;
       default:
         this.updateIdle(delta, now);
@@ -223,6 +298,22 @@ export class Villager implements Combatant {
     this.onBuildTick(site, delta);
   }
 
+  private updateToGarrison(delta: number) {
+    const site = this.garrisonSite;
+    if (!site || !site.canGarrison()) {
+      this.garrisonSite = null;
+      this.state = "idle";
+      return;
+    }
+    this.moveToward(site.position, delta);
+    if (this.model.position.distanceTo(site.position) <= BUILD_RANGE) {
+      site.occupy(this);
+      this.model.visible = false;
+      this.healthBar.group.visible = false;
+      this.state = "garrisoned";
+    }
+  }
+
   private updateMoving(delta: number) {
     this.moveToward(this.moveTarget, delta);
     if (this.model.position.distanceTo(this.moveTarget) <= ARRIVE_DIST) {
@@ -273,7 +364,11 @@ export class Villager implements Combatant {
   }
 
   private updateIdle(delta: number, now: number) {
-    const node = this.resources.findNearestAvailable(this.home, JOB_SEARCH_RADIUS);
+    const node = this.resources.findNearestAvailable(
+      this.home,
+      JOB_SEARCH_RADIUS,
+      this.assignedType ?? undefined,
+    );
     if (node) {
       this.resources.reserve(node);
       this.targetNode = node;
@@ -298,6 +393,12 @@ export class Villager implements Combatant {
     if (this.targetNode) this.resources.release(this.targetNode);
     this.targetNode = null;
     this.buildSite = null;
+    if (this.state === "garrisoned") {
+      this.garrisonSite?.release(this);
+      this.model.visible = true;
+      this.healthBar.group.visible = true;
+    }
+    this.garrisonSite = null;
   }
 
   private moveToward(point: THREE.Vector3, delta: number) {
@@ -305,11 +406,19 @@ export class Villager implements Combatant {
     toTarget.y = 0;
     const dist = toTarget.length();
     if (dist < 1e-4) return;
-    toTarget.normalize().multiplyScalar(Math.min(SPEED * delta, dist));
-    this.model.position.x += toTarget.x;
-    this.model.position.z += toTarget.z;
+    const step = Math.min(SPEED * delta, dist);
+    const dir = toTarget.normalize();
+    const steered = avoidWaterDirection(
+      this.model.position.x,
+      this.model.position.z,
+      dir.x,
+      dir.z,
+      step + 0.5,
+    );
+    this.model.position.x += steered.x * step;
+    this.model.position.z += steered.z * step;
     this.model.position.y = heightAt(this.model.position.x, this.model.position.z);
-    this.model.rotation.y = Math.atan2(toTarget.x, toTarget.z);
+    this.model.rotation.y = Math.atan2(steered.x, steered.z);
   }
 
   private pickWanderTarget(now: number) {

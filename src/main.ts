@@ -1,6 +1,12 @@
 import * as THREE from "three";
 import Stats from "stats.js";
-import { createWorld, heightAt, WORLD_SIZE, ENEMY_CAMP_XZ, isWater } from "./world/terrain";
+import {
+  createWorld,
+  heightAt,
+  WORLD_SIZE,
+  ENEMY_CAMP_XZ,
+  setBuildingObstacles,
+} from "./world/terrain";
 import { ResourceManager, NODE_CAPACITY, type ResourceType, type ResourceNode } from "./world/resources";
 import {
   createBuildingMesh,
@@ -879,6 +885,16 @@ function buildSelectionInfo(): SelectionInfo | null {
       maxHp: building.maxHp,
       stats,
       commands: buildingCommands(building),
+      garrisonGrid: def.garrisonCapacity
+        ? building.garrison.map(() => ({
+            icon: "🧑‍🌾",
+            tooltip: "Garrisoned villager — click to send it back out",
+          }))
+        : undefined,
+      onPickGarrison: (i: number) => {
+        const v = building.garrison[i];
+        if (v) v.forceIdle();
+      },
       queue: trains
         ? {
             items: building.queue.map((unit) => ({
@@ -1056,7 +1072,6 @@ function confirmPlacement() {
   if (!selectedBuildingType || !ghost) return;
   if (townBuildings.isTooCloseToAny(ghost.position, MIN_BUILDING_SPACING))
     return;
-  if (isWater(ghost.position.x, ghost.position.z)) return;
   const buildingType = selectedBuildingType;
   if (!buildManager.build(buildingType)) return;
 
@@ -1499,6 +1514,11 @@ function animate() {
 
   effects.update(delta);
   resources.update();
+  setBuildingObstacles(
+    [...townBuildings.list, ...enemyCamp.townBuildings.list]
+      .filter((b) => b.def.obstacleRadius !== undefined)
+      .map((b) => ({ x: b.position.x, z: b.position.z, radius: b.def.obstacleRadius! })),
+  );
   for (const villager of villagers) villager.update(delta, time);
   villagers = villagers.filter((v) => {
     if (!v.alive) {
@@ -1637,9 +1657,7 @@ function animate() {
       MIN_BUILDING_SPACING,
     )
       ? "Too close to another building — move elsewhere"
-      : isWater(ghost.position.x, ghost.position.z)
-        ? "Can't build on water — move elsewhere"
-        : `Click (or tap ✓) to place ${selectedBuildingType.name} — hold Shift to queue another`;
+      : `Click (or tap ✓) to place ${selectedBuildingType.name} — hold Shift to queue another`;
   }
   hud.setPrompt(placementPrompt);
   hud.setSelectionInfo(buildSelectionInfo());

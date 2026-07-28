@@ -12,54 +12,64 @@ const SEED = 1337;
  * only ever flattening/clustering around (0,0). */
 export const ENEMY_CAMP_XZ: [number, number] = [64, 46];
 
-/** Lakes: real obstacles, not just scenery — no building may be placed on
- * one, and units steer around them rather than walking through. Placed just
- * outside both bases' resource-cluster rings (12-42 units out) so they don't
- * collide with wood/stone/food placement, but close enough to actually be
- * stumbled across while exploring or expanding, not hidden off in a corner. */
-interface WaterFeature {
-  center: [number, number];
+interface CircleObstacle {
+  x: number;
+  z: number;
   radius: number;
-  depth: number;
 }
-const WATER_FEATURES: WaterFeature[] = [
-  { center: [-55, -25], radius: 26, depth: 7 },
-  { center: [32, -62], radius: 15, depth: 5 },
-];
-export const WATER_LEVEL = -3;
 
-/** True if (x, z) sits inside any lake — used to keep building placement off
- * the water. */
-export function isWater(x: number, z: number): boolean {
-  return WATER_FEATURES.some(
-    (lake) => Math.hypot(x - lake.center[0], z - lake.center[1]) < lake.radius,
-  );
+/** Every standing building (both the player's and the enemy camp's), as
+ * plain circles — refreshed once a frame from main.ts, since buildings get
+ * placed and destroyed during play. Farms aren't included: a villager needs
+ * to walk onto one to harvest it. */
+let buildingObstacles: CircleObstacle[] = [];
+
+export function setBuildingObstacles(obstacles: CircleObstacle[]) {
+  buildingObstacles = obstacles;
 }
 
 /**
- * Steers a movement direction around any lake the next step would enter,
- * instead of just refusing to move — units flow around the shore rather than
+ * Steers a movement direction around any building the next step would walk
+ * into, instead of just refusing to move — units flow around it rather than
  * pooling at the edge. Simple circular-obstacle avoidance (deflect to the
- * tangent that best keeps the original heading) rather than full pathfinding,
- * which is enough given every water feature here is a plain circle.
+ * tangent that best keeps the original heading) rather than full
+ * pathfinding, which is enough given every obstacle here is treated as a
+ * plain circle.
+ *
+ * `ignoreNear`, when given, skips any obstacle sitting right at that point —
+ * a villager walking up to dock at a building shouldn't be deflected away
+ * from the very building it's heading for.
  */
-export function avoidWaterDirection(
+export function avoidObstacleDirection(
   x: number,
   z: number,
   dirX: number,
   dirZ: number,
   lookahead: number,
+  ignoreNear?: { x: number; z: number },
 ): { x: number; z: number } {
-  for (const lake of WATER_FEATURES) {
-    const toCenterX = lake.center[0] - x;
-    const toCenterZ = lake.center[1] - z;
+  for (const obstacle of buildingObstacles) {
+    if (
+      ignoreNear &&
+      Math.hypot(obstacle.x - ignoreNear.x, obstacle.z - ignoreNear.z) < obstacle.radius + 1
+    ) {
+      continue;
+    }
+
+    const toCenterX = obstacle.x - x;
+    const toCenterZ = obstacle.z - z;
     const distToCenter = Math.hypot(toCenterX, toCenterZ);
-    if (distToCenter > lake.radius + lookahead + 2) continue;
+    // Already inside this obstacle (e.g. a villager just trained at its
+    // Town Center's exact center) — let it walk out on its own heading
+    // instead of deflecting, which degenerates to a zero vector right at
+    // the center and would freeze the unit in place forever.
+    if (distToCenter < obstacle.radius) continue;
+    if (distToCenter > obstacle.radius + lookahead + 2) continue;
 
     const aheadX = x + dirX * lookahead;
     const aheadZ = z + dirZ * lookahead;
-    const clearance = lake.radius + 0.5;
-    if (Math.hypot(aheadX - lake.center[0], aheadZ - lake.center[1]) >= clearance) continue;
+    const clearance = obstacle.radius + 0.5;
+    if (Math.hypot(aheadX - obstacle.x, aheadZ - obstacle.z) >= clearance) continue;
 
     const nx = toCenterX / (distToCenter || 1);
     const nz = toCenterZ / (distToCenter || 1);
@@ -110,15 +120,6 @@ export function heightAt(x: number, z: number): number {
   const distFromNearestBase = Math.min(distFromPlayer, distFromCamp);
   const valleyFalloff = THREE.MathUtils.smoothstep(distFromNearestBase, 15, 60);
   h *= valleyFalloff;
-
-  // Carve each lake's basin — landmark dips, masked by flat water planes
-  // added in createWorld().
-  for (const lake of WATER_FEATURES) {
-    const distFromLake = Math.hypot(x - lake.center[0], z - lake.center[1]);
-    const lakeDip =
-      (1 - THREE.MathUtils.smoothstep(distFromLake, lake.radius * 0.55, lake.radius)) * lake.depth;
-    h -= lakeDip;
-  }
 
   return h;
 }
@@ -199,28 +200,11 @@ export function createTerrain(): THREE.Mesh {
   return mesh;
 }
 
-/** A flat, semi-transparent disc sitting at WATER_LEVEL over one lake's basin
- * carved into heightAt — purely decorative, no collision. */
-function createWaterPlane(lake: WaterFeature): THREE.Mesh {
-  const geometry = new THREE.CircleGeometry(lake.radius * 0.98, 48);
-  geometry.rotateX(-Math.PI / 2);
-  const material = new THREE.MeshStandardMaterial({
-    color: 0x2f6f8a,
-    transparent: true,
-    opacity: 0.85,
-    roughness: 0.15,
-    metalness: 0.1,
-  });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.set(lake.center[0], WATER_LEVEL, lake.center[1]);
-  return mesh;
-}
-
-/** Terrain mesh plus a water plane per lake, grouped so main.ts can add
- * everything with a single scene.add() the same way it always has. */
+/** Wraps the terrain mesh in a group so main.ts can add it with a single
+ * scene.add() the same way it always has (previously also held water
+ * planes). */
 export function createWorld(): THREE.Group {
   const group = new THREE.Group();
   group.add(createTerrain());
-  for (const lake of WATER_FEATURES) group.add(createWaterPlane(lake));
   return group;
 }

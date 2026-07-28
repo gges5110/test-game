@@ -33,6 +33,10 @@ export interface BuildingDef {
   /** If set, selecting this building offers a "Train" action that spends
    * food and produces a unit after `time` seconds. */
   trains?: { unit: UnitKind | "villager"; foodCost: number; time: number };
+  /** Radius of the circle units steer around instead of walking through —
+   * roughly the building's footprint. Omitted for Farms, which villagers
+   * need to walk onto to harvest. */
+  obstacleRadius?: number;
 }
 
 // Building roster and wood/stone cost ratios mirror Age of Empires II: economy
@@ -55,6 +59,7 @@ export const BUILDINGS: BuildingDef[] = [
     garrisonCapacity: 15,
     garrisonAttack: { range: 8, damagePerVillager: 3, cooldown: 1.5 },
     attackOriginY: 2.4,
+    obstacleRadius: 1.8,
   },
   {
     id: "house",
@@ -64,6 +69,7 @@ export const BUILDINGS: BuildingDef[] = [
     maxHp: 100,
     buildTime: 12,
     requiresTownCenter: true,
+    obstacleRadius: 1.5,
   },
   {
     id: "farm",
@@ -83,6 +89,7 @@ export const BUILDINGS: BuildingDef[] = [
     buildTime: 16,
     requiresTownCenter: true,
     dropOff: "food",
+    obstacleRadius: 1.0,
   },
   {
     id: "lumber_camp",
@@ -93,6 +100,7 @@ export const BUILDINGS: BuildingDef[] = [
     buildTime: 16,
     requiresTownCenter: true,
     dropOff: "wood",
+    obstacleRadius: 1.1,
   },
   {
     id: "mining_camp",
@@ -103,6 +111,7 @@ export const BUILDINGS: BuildingDef[] = [
     buildTime: 16,
     requiresTownCenter: true,
     dropOff: "stone",
+    obstacleRadius: 1.1,
   },
   {
     id: "blacksmith",
@@ -113,6 +122,7 @@ export const BUILDINGS: BuildingDef[] = [
     buildTime: 20,
     requiresTownCenter: true,
     maxBuilt: 1,
+    obstacleRadius: 1.3,
   },
   {
     id: "barracks",
@@ -123,6 +133,7 @@ export const BUILDINGS: BuildingDef[] = [
     buildTime: 22,
     requiresTownCenter: true,
     trains: { unit: "soldier", foodCost: 4, time: 14 },
+    obstacleRadius: 1.6,
   },
   {
     id: "archery_range",
@@ -133,6 +144,7 @@ export const BUILDINGS: BuildingDef[] = [
     buildTime: 22,
     requiresTownCenter: true,
     trains: { unit: "archer", foodCost: 4, time: 14 },
+    obstacleRadius: 1.5,
   },
   {
     id: "stable",
@@ -143,6 +155,7 @@ export const BUILDINGS: BuildingDef[] = [
     buildTime: 22,
     requiresTownCenter: true,
     trains: { unit: "scout", foodCost: 4, time: 14 },
+    obstacleRadius: 1.7,
   },
   {
     id: "outpost",
@@ -153,6 +166,7 @@ export const BUILDINGS: BuildingDef[] = [
     buildTime: 14,
     requiresTownCenter: true,
     attack: { range: 6, damage: 8, cooldown: 1.3 },
+    obstacleRadius: 0.7,
     attackOriginY: 2.2,
   },
   {
@@ -167,6 +181,7 @@ export const BUILDINGS: BuildingDef[] = [
     attack: { range: 15, damage: 35, cooldown: 2 },
     attackOriginY: 3.2,
     garrisonCapacity: 15,
+    obstacleRadius: 1.8,
   },
 ];
 

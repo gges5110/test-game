@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { heightAt, isWater } from "./terrain";
+import { heightAt } from "./terrain";
 
 export type ResourceType = "wood" | "stone" | "food";
 
@@ -251,7 +251,6 @@ export class ResourceManager {
             // Keep every base's own footprint clear, not just the player's.
             const tooCloseToABase = bases.some((b) => Math.hypot(x - b.x, z - b.z) < 8);
             if (tooCloseToABase) continue;
-            if (isWater(x, z)) continue;
 
             const y = heightAt(x, z);
             const slope =

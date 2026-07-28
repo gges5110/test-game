@@ -274,6 +274,51 @@ html, body {
   font-size: 14px;
 }
 
+/* Secondary details for the current selection (full stat list, garrison
+   grid) — split out from the bottom info panel so that one never needs an
+   internal scrollbar. Runs down the left edge between the inventory row and
+   the bottom bar. */
+#hud .side-panel {
+  position: fixed;
+  left: 14px;
+  top: 70px;
+  width: 220px;
+  /* Sized to its content, not the whole gap between the inventory row and
+     the bottom bar — only falls back to scrolling if content somehow still
+     exceeds the space available. */
+  max-height: calc(100vh - 70px - 202px);
+  pointer-events: auto;
+  background: rgba(20, 12, 5, 0.72);
+  backdrop-filter: blur(3px);
+  border: 2px solid var(--bronze);
+  border-radius: 6px;
+  padding: 8px 12px;
+  overflow-y: auto;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7);
+  font-size: 12.5px;
+}
+
+#hud .side-panel-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--bronze-bright);
+  border-bottom: 1px solid rgba(201, 162, 39, 0.4);
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+#hud .side-section-label {
+  margin-top: 10px;
+  margin-bottom: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--bronze-bright);
+  opacity: 0.9;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 #hud .select-box {
   position: fixed;
   border: 1.5px solid rgba(111, 227, 255, 0.9);
@@ -569,6 +614,10 @@ html, body {
 
 #hud .unit-chip:active {
   transform: scale(0.9);
+}
+
+#hud .garrison-grid {
+  margin-top: 6px;
 }
 
 #hud .queue-block {

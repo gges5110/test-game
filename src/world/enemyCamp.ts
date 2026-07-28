@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { heightAt, avoidWaterDirection } from "./terrain";
+import { heightAt, avoidObstacleDirection } from "./terrain";
 import {
   createBuildingMesh,
   captureStructureMeshes,
@@ -224,12 +224,13 @@ export class EnemyGuard implements Combatant {
     if (dist < 1e-4) return;
     const step = Math.min(GUARD_SPEED * delta, dist);
     const dir = toTarget.normalize();
-    const steered = avoidWaterDirection(
+    const steered = avoidObstacleDirection(
       this.model.position.x,
       this.model.position.z,
       dir.x,
       dir.z,
       step + 0.5,
+      { x: point.x, z: point.z },
     );
     this.model.position.x += steered.x * step;
     this.model.position.z += steered.z * step;

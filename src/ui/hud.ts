@@ -91,6 +91,11 @@ export interface SelectionInfo {
   unitGrid?: { icon: string; tooltip: string }[];
   /** Clicking a unit icon narrows the selection to just that unit. */
   onPickUnit?: (index: number) => void;
+  /** For a building with a garrison: one icon per unit sheltering inside,
+   * shown alongside (not instead of) the building's own portrait/stats. */
+  garrisonGrid?: { icon: string; tooltip: string }[];
+  /** Clicking a garrisoned unit's icon sends just that one back out. */
+  onPickGarrison?: (index: number) => void;
   /** Contextual commands for this selection, filling the command grid. */
   commands?: CommandButton[];
   /** Pending unit production, shown as a clickable icon strip. */
@@ -115,6 +120,11 @@ export class Hud {
   private placementButtonsEl: HTMLElement;
   private selectBoxEl: HTMLElement;
   private infoEl: HTMLElement;
+  /** A separate left-edge panel for secondary details (the full stat list,
+   * the garrison grid) that used to crowd the bottom info panel into
+   * needing an internal scrollbar even on a full screen. The bottom panel
+   * keeps just portrait/name/HP/description/commands, always compact. */
+  private sidePanelEl: HTMLElement;
   private minimapCanvas: HTMLCanvasElement;
   private minimapCtx: CanvasRenderingContext2D;
   private onMinimapClick: (x: number, z: number) => void = () => {};
@@ -127,8 +137,11 @@ export class Hud {
   private queueFillEl: HTMLElement | null = null;
   private queueStatusEl: HTMLElement | null = null;
   private lastQueueSig = "";
+  private garrisonStripEl: HTMLElement | null = null;
+  private lastGarrisonSig = "";
   private onCancelQueued: (index: number) => void = () => {};
   private onPickUnit: (index: number) => void = () => {};
+  private onPickGarrison: (index: number) => void = () => {};
   /** The real selection's info, kept even while a hover preview is showing
    * instead of it, so leaving the hovered button restores it exactly. */
   private liveInfo: SelectionInfo | null = null;
@@ -178,6 +191,8 @@ export class Hud {
       <div class="prompt" hidden></div>
       <div class="select-box" hidden></div>
 
+      <div class="side-panel" hidden></div>
+
       <div class="aoe-bar">
         <div class="aoe-commands">
           <div class="cmd-grid"></div>
@@ -200,6 +215,7 @@ export class Hud {
     this.defeatOverlayEl = root.querySelector(".defeat-overlay")!;
     this.victoryOverlayEl = root.querySelector(".victory-overlay")!;
     this.promptEl = root.querySelector(".prompt")!;
+    this.sidePanelEl = root.querySelector(".side-panel")!;
     this.cmdGridEl = root.querySelector(".cmd-grid")!;
     this.commandsWrapEl = root.querySelector(".aoe-commands")!;
     this.placementButtonsEl = root.querySelector(".placement-buttons")!;
@@ -271,6 +287,14 @@ export class Hud {
       }
       const unit = target.closest<HTMLElement>(".unit-chip");
       if (unit) this.onPickUnit(Number(unit.dataset.i));
+    });
+
+    // The garrison grid lives in the side panel, not the bottom info panel —
+    // same delegated-listener reasoning (rebuilt every frame the selection
+    // is live).
+    this.sidePanelEl.addEventListener("click", (e) => {
+      const garrisonChip = (e.target as HTMLElement).closest<HTMLElement>(".garrison-chip");
+      if (garrisonChip) this.onPickGarrison(Number(garrisonChip.dataset.gi));
     });
 
     this.inventory.onChange(() => this.renderInventory());
@@ -477,6 +501,8 @@ export class Hud {
     this.infoEl.classList.add("empty");
     this.hpFillEl = null;
     this.hpTextEl = null;
+    this.sidePanelEl.hidden = true;
+    this.sidePanelEl.innerHTML = "";
     this.rootCommands = [];
     this.commandPath = [];
     this.renderCommandGrid();
@@ -484,12 +510,6 @@ export class Hud {
   }
 
   private renderSelectionSkeleton(info: SelectionInfo) {
-    const statsRows = (info.stats ?? [])
-      .map(
-        ([label, value]) =>
-          `<div class="stat-row"><span>${label}</span><span class="stat-value">${value}</span></div>`,
-      )
-      .join("");
     const hasHp = info.hp !== undefined && info.maxHp !== undefined;
     const hpBlock = hasHp
       ? `
@@ -522,7 +542,6 @@ export class Hud {
           <div class="portrait">${info.portrait ?? "❔"}</div>
           <div class="info-stats">
             ${hpBlock}
-            ${statsRows}
           </div>
         </div>
       `;
@@ -536,13 +555,38 @@ export class Hud {
 
     this.hpFillEl = this.infoEl.querySelector(".hp-fill");
     this.hpTextEl = this.infoEl.querySelector(".hp-text");
-    this.statValueEls = [
-      ...this.infoEl.querySelectorAll<HTMLElement>(".stat-row .stat-value"),
-    ];
     this.queueStripEl = this.infoEl.querySelector(".queue-strip");
     this.queueFillEl = this.infoEl.querySelector(".queue-fill");
     this.queueStatusEl = this.infoEl.querySelector(".queue-status");
     this.lastQueueSig = "";
+
+    // Secondary details — the full stat list and the garrison grid — live in
+    // the left side panel instead, so the bottom panel never needs an
+    // internal scrollbar to show them.
+    this.onPickGarrison = info.onPickGarrison ?? (() => {});
+    const hasSideContent = (info.stats && info.stats.length > 0) || !!info.garrisonGrid;
+    this.sidePanelEl.hidden = !hasSideContent;
+    if (hasSideContent) {
+      const statsRows = (info.stats ?? [])
+        .map(
+          ([label, value]) =>
+            `<div class="stat-row"><span>${label}</span><span class="stat-value">${value}</span></div>`,
+        )
+        .join("");
+      this.sidePanelEl.innerHTML = `
+        <div class="side-panel-title">${info.title}</div>
+        ${statsRows ? `<div class="stat-rows">${statsRows}</div>` : ""}
+        ${info.garrisonGrid ? `<div class="side-section-label">Garrison</div><div class="unit-grid garrison-grid"></div>` : ""}
+      `;
+    } else {
+      this.sidePanelEl.innerHTML = "";
+    }
+    this.statValueEls = [
+      ...this.sidePanelEl.querySelectorAll<HTMLElement>(".stat-row .stat-value"),
+    ];
+    this.garrisonStripEl = this.sidePanelEl.querySelector(".garrison-grid");
+    this.lastGarrisonSig = "";
+
     this.updateSelectionDynamic(info);
   }
 
@@ -561,6 +605,25 @@ export class Hud {
       if (el && el.textContent !== value) el.textContent = value;
     });
     this.updateQueue(info);
+    this.updateGarrison(info);
+  }
+
+  private updateGarrison(info: SelectionInfo) {
+    this.onPickGarrison = info.onPickGarrison ?? (() => {});
+    if (!info.garrisonGrid || !this.garrisonStripEl) return;
+
+    // Only rebuild the chips when who's actually inside changes — this runs
+    // every frame otherwise.
+    const sig = info.garrisonGrid.map((u) => u.icon).join("");
+    if (sig !== this.lastGarrisonSig) {
+      this.lastGarrisonSig = sig;
+      this.garrisonStripEl.innerHTML = info.garrisonGrid
+        .map(
+          (u, i) =>
+            `<button class="unit-chip garrison-chip" data-gi="${i}" title="${u.tooltip}">${u.icon}</button>`,
+        )
+        .join("");
+    }
   }
 
   private updateQueue(info: SelectionInfo) {

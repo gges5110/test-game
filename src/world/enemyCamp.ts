@@ -15,6 +15,7 @@ import { Inventory } from "../systems/inventory";
 import { BuildManager, getBuildingDef } from "../systems/building";
 import { TownBuildings, type PlacedBuilding } from "../systems/townBuildings";
 import { enqueueUnit, advanceProduction, contributeBuild } from "../systems/production";
+import { populationCapacity } from "../systems/population";
 
 export const GUARD_MAX_HP = 50;
 const GUARD_SPEED = 2.2;
@@ -310,10 +311,16 @@ const GROWTH_BUILD_ORDER: { id: string; cap: number }[] = [
 ];
 
 const RAID_INTERVAL = 60;
-const RAID_PARTY_SIZE = 2;
-/** Always keep at least this many patrol guards home defending the camp —
- * a raid only launches with whatever's left over. */
+/** Up to this fraction of all living guards can be sent on a single raid —
+ * a camp with 2 guards still only spares 1, but a camp with 12 can mount a
+ * real 6-guard push, instead of every raid being a flat, token size. */
+const RAID_GUARD_FRACTION = 0.5;
+const RAID_MAX_PARTY = 6;
+/** Always keep at least this many (or this fraction of the total, whichever
+ * is larger) patrol guards home defending the camp — a raid only launches
+ * with whatever's left over. */
 const RAID_MIN_HOME_GUARDS = 1;
+const RAID_MIN_HOME_FRACTION = 0.25;
 
 export interface EnemyCamp {
   townBuildings: TownBuildings;
@@ -423,17 +430,39 @@ function nextGrowthOffset(camp: EnemyCamp): [number, number] {
   return GROWTH_OFFSETS[extraIndex % GROWTH_OFFSETS.length];
 }
 
+/** Reorders GROWTH_BUILD_ORDER to react to the camp's actual situation
+ * instead of always working through the same fixed list: rebuilding a lost
+ * garrison takes priority over economy growth, and more housing jumps the
+ * queue once population is actually capped (building it earlier would just
+ * be wasted priority over whatever's next in line). */
+function growthPriority(camp: EnemyCamp): { id: string; cap: number }[] {
+  const order = [...GROWTH_BUILD_ORDER];
+  const guardsAlive = camp.guards.filter((g) => g.alive).length;
+  if (guardsAlive === 0) {
+    order.sort((a, b) => (a.id === "barracks" ? -1 : b.id === "barracks" ? 1 : 0));
+    return order;
+  }
+  const houses = camp.buildManager.countBuilt("house");
+  const townCenters = camp.buildManager.countBuilt("town_center");
+  const popUsed = camp.villagers.length + camp.guards.length;
+  if (popUsed >= populationCapacity(houses, townCenters)) {
+    order.sort((a, b) => (a.id === "house" ? -1 : b.id === "house" ? 1 : 0));
+  }
+  return order;
+}
+
 /** The camp's "build brain": if nothing is currently under construction and
- * an idle villager is free, starts the next affordable building in the
- * growth order. Entirely gated on the camp's own gathered resources and
- * villager availability — never spawns anything for free. */
+ * an idle villager is free, starts the next affordable building in whatever
+ * order growthPriority currently calls for. Entirely gated on the camp's own
+ * gathered resources and villager availability — never spawns anything for
+ * free. */
 function tryStartGrowth(camp: EnemyCamp, scene: THREE.Scene) {
   const alreadyBuilding = camp.townBuildings.list.some((b) => b.underConstruction);
   if (alreadyBuilding) return;
   const idleVillager = camp.villagers.find((v) => v.isIdle);
   if (!idleVillager) return;
 
-  for (const { id, cap } of GROWTH_BUILD_ORDER) {
+  for (const { id, cap } of growthPriority(camp)) {
     if (camp.buildManager.countBuilt(id) >= cap) continue;
     const def = getBuildingDef(id);
     if (!camp.buildManager.canBuild(def)) continue;
@@ -471,23 +500,54 @@ function tryQueueTraining(camp: EnemyCamp) {
   }
 }
 
-/** Every RAID_INTERVAL seconds, peels off up to RAID_PARTY_SIZE patrol
- * guards (beyond a defensive floor) and sends them at the player's town. If
- * the camp hasn't grown enough to spare anyone, the raid simply fizzles —
- * there's no scripted fallback spawn. */
-function tryDispatchRaid(camp: EnemyCamp, delta: number, playerTownCenter: THREE.Vector3 | null) {
+/** Picks where a raid should march toward: the player's weakest standing,
+ * finished building (lowest HP fraction), tie-broken by distance from camp —
+ * so raiders press an actual vulnerability instead of always making a
+ * beeline for the (usually best-defended) Town Center. Guards still attack
+ * whatever building is nearest once they're actually in range (see
+ * updateRaiding), so this mainly steers where the party heads first. */
+function pickRaidTarget(camp: EnemyCamp, playerTownBuildings: TownBuildings): THREE.Vector3 | null {
+  let weakest: PlacedBuilding | null = null;
+  let weakestScore = Infinity;
+  for (const b of playerTownBuildings.list) {
+    if (b.underConstruction) continue;
+    const hpFraction = b.hp / b.maxHp;
+    const dist = camp.center.distanceTo(b.position);
+    // HP fraction dominates the choice; distance only breaks a near-tie.
+    const score = hpFraction * 1000 + dist * 0.01;
+    if (score < weakestScore) {
+      weakestScore = score;
+      weakest = b;
+    }
+  }
+  return weakest ? weakest.position.clone() : null;
+}
+
+/** Every RAID_INTERVAL seconds, peels off a party of patrol guards (beyond a
+ * defensive floor, scaled with how many guards the camp actually has) and
+ * sends them at the player's weakest building. If the camp hasn't grown
+ * enough to spare anyone, the raid simply fizzles — there's no scripted
+ * fallback spawn. */
+function tryDispatchRaid(camp: EnemyCamp, delta: number, playerTownBuildings: TownBuildings) {
   camp.raidTimer -= delta;
   if (camp.raidTimer > 0) return;
   camp.raidTimer = RAID_INTERVAL;
-  if (!playerTownCenter) return;
+
+  const target = pickRaidTarget(camp, playerTownBuildings);
+  if (!target) return;
 
   const patrolling = camp.guards.filter((g) => g.alive && !g.isRaiding);
-  const available = patrolling.length - RAID_MIN_HOME_GUARDS;
+  const totalGuards = camp.guards.filter((g) => g.alive).length;
+  const minHome = Math.max(RAID_MIN_HOME_GUARDS, Math.ceil(totalGuards * RAID_MIN_HOME_FRACTION));
+  const available = patrolling.length - minHome;
   if (available <= 0) return;
 
-  const partySize = Math.min(RAID_PARTY_SIZE, available);
+  const partySize = Math.max(
+    1,
+    Math.min(RAID_MAX_PARTY, Math.floor(totalGuards * RAID_GUARD_FRACTION), available),
+  );
   for (let i = 0; i < partySize; i++) {
-    patrolling[i].commandRaid(playerTownCenter);
+    patrolling[i].commandRaid(target);
   }
 }
 
@@ -540,9 +600,7 @@ export function updateEnemyCamp(
 
   tryStartGrowth(camp, scene);
   tryQueueTraining(camp);
-
-  const playerTownCenter = playerTownBuildings.list.find((b) => b.type === "town_center");
-  tryDispatchRaid(camp, delta, playerTownCenter ? playerTownCenter.position : null);
+  tryDispatchRaid(camp, delta, playerTownBuildings);
 }
 
 /** Wraps a camp building as a Combatant so player soldiers can target it

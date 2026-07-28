@@ -5,10 +5,12 @@ import {
   captureStructureMeshes,
   setConstructionAppearance,
   disposeBuildingMesh,
+  attachHealthBar,
 } from "./buildings";
 import { createHealthBar, type HealthBar } from "./healthBar";
+import { createGuardModel, tintHostile } from "./unitVisuals";
 import { Villager } from "./villager";
-import type { Combatant } from "./combatant";
+import { counterMultiplier, type Combatant, type CombatRole } from "./combatant";
 import type { GatherSource, ResourceType } from "./resources";
 import type { Effects } from "./effects";
 import { Inventory } from "../systems/inventory";
@@ -40,11 +42,17 @@ export class EnemyGuard implements Combatant {
   readonly model: THREE.Group;
   hp = GUARD_MAX_HP;
   alive = true;
+  /** A melee brawler, same as the player's Soldier — counts as "soldier" in
+   * the counter triangle so Archers get their bonus and Scouts eat a
+   * penalty fighting one, same as they would against a real Soldier. */
+  readonly combatRole: CombatRole = "soldier";
   /** Fired when an attack lands, so main can draw a slash effect. */
   onAttack: ((from: THREE.Vector3, to: THREE.Vector3) => void) | null = null;
 
   private visual: THREE.Group;
-  private weapon: THREE.Mesh;
+  /** The axe (haft + head grouped) — only ever rotated as a unit during the
+   * attack swing, so a plain Object3D is enough; doesn't need to be a Mesh. */
+  private weapon: THREE.Object3D;
   private attackAnim = 0;
   private home: THREE.Vector3;
   private healthBar: HealthBar;
@@ -59,7 +67,7 @@ export class EnemyGuard implements Combatant {
     this.wanderTarget = home.clone();
     this.model = new THREE.Group();
     this.visual = createGuardModel();
-    this.weapon = this.visual.userData.weapon as THREE.Mesh;
+    this.weapon = this.visual.userData.weapon as THREE.Object3D;
     this.model.add(this.visual);
     this.model.position.copy(home);
     this.model.userData.enemyGuard = this;
@@ -99,7 +107,9 @@ export class EnemyGuard implements Combatant {
       if (dist > GUARD_ATTACK_RANGE) {
         this.moveToward(target.model.position, delta);
       } else if (now >= this.attackReadyAt) {
-        target.takeDamage(GUARD_ATTACK_DAMAGE);
+        const damage =
+          GUARD_ATTACK_DAMAGE * counterMultiplier(this.combatRole, target.combatRole);
+        target.takeDamage(damage);
         this.attackReadyAt = now + GUARD_ATTACK_COOLDOWN;
         this.attackAnim = 1;
         this.model.rotation.y = Math.atan2(
@@ -240,45 +250,6 @@ export class EnemyGuard implements Combatant {
   }
 }
 
-function createGuardModel(): THREE.Group {
-  const group = new THREE.Group();
-  const armorMat = new THREE.MeshStandardMaterial({ color: 0x6b2a2a });
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0xc48a5a });
-
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.7, 8), armorMat);
-  body.position.y = 0.55;
-  body.castShadow = true;
-  group.add(body);
-
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), skinMat);
-  head.position.y = 1.0;
-  head.castShadow = true;
-  group.add(head);
-
-  const weapon = new THREE.Mesh(
-    new THREE.BoxGeometry(0.08, 0.6, 0.08),
-    new THREE.MeshStandardMaterial({ color: 0x888888 }),
-  );
-  weapon.position.set(0.28, 0.75, 0);
-  weapon.castShadow = true;
-  group.add(weapon);
-  group.userData.weapon = weapon;
-
-  return group;
-}
-
-/** Tints a mesh's structure a dusty red, so an enemy camp (or its villagers/
- * guards) reads as hostile at a glance instead of looking like the player's
- * own. */
-function tintHostile(mesh: THREE.Group) {
-  mesh.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return;
-    const material = child.material as THREE.MeshStandardMaterial;
-    if (!material.color) return;
-    material.color.multiply(new THREE.Color(1, 0.6, 0.56));
-  });
-}
-
 // --- The camp itself ---------------------------------------------------------
 
 const STARTING_LAYOUT: { id: string; offset: [number, number] }[] = [
@@ -385,6 +356,7 @@ export function createEnemyCamp(
     mesh.position.set(x, heightAt(x, z), z);
     captureStructureMeshes(mesh);
     tintHostile(mesh);
+    attachHealthBar(mesh);
     scene.add(mesh);
     townBuildings.add(spot.id, def, mesh, mesh.position);
     buildManager.grant(spot.id);
@@ -475,6 +447,7 @@ function tryStartGrowth(camp: EnemyCamp, scene: THREE.Scene) {
     mesh.position.set(x, heightAt(x, z), z);
     captureStructureMeshes(mesh);
     tintHostile(mesh);
+    attachHealthBar(mesh);
     scene.add(mesh);
 
     const placed = camp.townBuildings.add(id, def, mesh, mesh.position);
@@ -589,6 +562,9 @@ export function updateEnemyCamp(
   });
 
   for (const building of camp.townBuildings.list) {
+    const bar = building.mesh.userData.healthBar as HealthBar | undefined;
+    bar?.setFraction(building.hp / building.maxHp);
+
     const finished = advanceProduction(building, now);
     if (!finished) continue;
     if (finished === "villager") {

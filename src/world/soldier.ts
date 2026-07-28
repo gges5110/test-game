@@ -1,9 +1,13 @@
 import * as THREE from "three";
 import { heightAt, avoidObstacleDirection } from "./terrain";
-import type { Combatant } from "./combatant";
+import { counterMultiplier, type Combatant, type CombatRole } from "./combatant";
 import { createHealthBar, type HealthBar } from "./healthBar";
+import { createSelectionRing, createUnitModel } from "./unitVisuals";
 
-export type UnitKind = "soldier" | "archer" | "scout";
+/** A UnitKind *is* a CombatRole here — every trainable unit participates in
+ * the counter triangle. Kept as its own alias since "UnitKind" is the name
+ * used everywhere else in the game (training, HUD labels, save data). */
+export type UnitKind = CombatRole;
 
 interface UnitPreset {
   label: string;
@@ -98,7 +102,7 @@ export class Soldier {
     this.home = home.clone();
     this.wanderTarget = home.clone();
     this.model = new THREE.Group();
-    this.visual = createUnitModel(this.stats, kind);
+    this.visual = createUnitModel(kind, this.stats.armorColor, this.stats.attackRange > RANGED_THRESHOLD);
     this.weapon = this.visual.userData.weapon as THREE.Mesh;
     this.model.add(this.visual);
     this.model.position.copy(home);
@@ -142,6 +146,11 @@ export class Soldier {
     return this.stats.attackRange > RANGED_THRESHOLD;
   }
 
+  /** What this counts as for the counter triangle — a Soldier's own kind. */
+  get combatRole(): CombatRole {
+    return this.kind;
+  }
+
   update(delta: number, now: number, targets: Combatant[]) {
     if (!this.alive) return;
     this.updateAttackAnim(delta);
@@ -163,7 +172,9 @@ export class Soldier {
       if (dist > this.stats.attackRange) {
         this.moveToward(target.model.position, delta);
       } else if (now >= this.attackReadyAt) {
-        target.takeDamage(this.stats.attackDamage);
+        const damage =
+          this.stats.attackDamage * counterMultiplier(this.kind, target.combatRole);
+        target.takeDamage(damage);
         this.attackReadyAt = now + this.stats.attackCooldown;
         this.attackAnim = 1;
         this.model.rotation.y = Math.atan2(
@@ -274,48 +285,4 @@ export class Soldier {
     this.model.position.y = heightAt(this.model.position.x, this.model.position.z);
     this.model.rotation.y = Math.atan2(steered.x, steered.z);
   }
-}
-
-function createSelectionRing(): THREE.Mesh {
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.4, 0.5, 24),
-    new THREE.MeshBasicMaterial({ color: 0x6fe3ff, side: THREE.DoubleSide }),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.05;
-  return ring;
-}
-
-function createUnitModel(stats: UnitPreset, kind: UnitKind): THREE.Group {
-  const group = new THREE.Group();
-  const armorMat = new THREE.MeshStandardMaterial({ color: stats.armorColor });
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0xd8a888 });
-
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.5, 4, 8), armorMat);
-  body.position.y = 0.75;
-  body.castShadow = true;
-  group.add(body);
-
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 10), skinMat);
-  head.position.y = 1.28;
-  head.castShadow = true;
-  group.add(head);
-
-  const ranged = stats.attackRange > RANGED_THRESHOLD;
-  const weaponMat = new THREE.MeshStandardMaterial({
-    color: ranged ? 0x8a6a3a : 0xcfcfd6,
-    metalness: ranged ? 0 : 0.4,
-    roughness: ranged ? 0.8 : 0.4,
-  });
-  const weapon = ranged
-    ? new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.03, 6, 10, Math.PI * 1.1), weaponMat)
-    : new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.65, 0.06), weaponMat);
-  weapon.position.set(0.34, 0.85, 0);
-  weapon.rotation.z = ranged ? Math.PI / 2 : -0.35;
-  weapon.castShadow = true;
-  group.add(weapon);
-  group.userData.weapon = weapon;
-
-  void kind;
-  return group;
 }

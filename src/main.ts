@@ -20,6 +20,7 @@ import {
 import type { HealthBar } from "./world/healthBar";
 import { Villager, VILLAGER_MAX_HP } from "./world/villager";
 import { Soldier, getUnitStats, type UnitKind } from "./world/soldier";
+import { beats, counteredBy } from "./world/combatant";
 import {
   createEnemyCamp,
   updateEnemyCamp,
@@ -587,6 +588,12 @@ function unitIcon(unit: UnitKind | "villager"): string {
   return "🛡️";
 }
 
+/** "Beats X, weak to Y" hint for the counter triangle — Soldier > Archer >
+ * Scout > Soldier, 1.5x damage in the favorable direction. */
+function counterLine(kind: UnitKind): [string, string] {
+  return ["🔺 Counters", `Beats ${unitLabel(beats(kind))}, weak to ${unitLabel(counteredBy(kind))}`];
+}
+
 // AoE2 splits a villager's Build menu into economic and military pages.
 const ECONOMIC_BUILDINGS = [
   "house",
@@ -630,6 +637,7 @@ function buildingPreviewInfo(def: BuildingDef): SelectionInfo {
       `${unitIcon(def.trains.unit)} Trains`,
       `${unitLabel(def.trains.unit)} (${def.trains.foodCost}${RESOURCE_ICON.food}, ${def.trains.time}s)`,
     ]);
+    if (def.trains.unit !== "villager") stats.push(counterLine(def.trains.unit));
   }
   if (def.dropOff) {
     stats.push([
@@ -667,7 +675,7 @@ function buildingCommand(def: BuildingDef): CommandButton {
 }
 
 /** Commands a villager offers: AoE2's Build ▸ Economic / Military pages. */
-const GATHER_TYPES: ResourceType[] = ["wood", "stone", "food"];
+const GATHER_TYPES: ResourceType[] = ["wood", "stone", "food", "gold"];
 
 function villagerCommands(): CommandButton[] {
   return [
@@ -755,15 +763,16 @@ function buildingCommands(building: PlacedBuilding): CommandButton[] {
   if (building.hp < building.maxHp) {
     const fullCost = fullRepairCost(building);
     const spend = Math.min(fullCost, inventory.get("wood"));
+    const spendShown = Math.floor(spend);
     commands.push({
       icon: "🔧",
       label: "Repair",
-      sub: `${spend}/${fullCost}${RESOURCE_ICON.wood}`,
+      sub: `${spendShown}/${fullCost}${RESOURCE_ICON.wood}`,
       disabled: spend <= 0,
       tooltip:
         spend >= fullCost
           ? `Repair fully for ${fullCost} wood`
-          : `Partial repair with ${spend} of ${fullCost} wood`,
+          : `Partial repair with ${spendShown} of ${fullCost} wood`,
       onClick: () => applyRepair(building, inventory),
     });
   }
@@ -805,6 +814,7 @@ function buildSelectionInfo(): SelectionInfo | null {
           ["⚔️ Damage", `${GUARD_ATTACK_DAMAGE}`],
           ["➹ Range", `${GUARD_ATTACK_RANGE}`],
           ["⏱ Cooldown", `${GUARD_ATTACK_COOLDOWN}s`],
+          counterLine("soldier"),
         ],
         commands: [],
       };
@@ -997,6 +1007,7 @@ function buildSelectionInfo(): SelectionInfo | null {
       ["➹ Range", `${stats.attackRange}`],
       ["⏱ Cooldown", `${stats.attackCooldown}s`],
       ["🎯 Awareness", `${stats.awarenessRange}`],
+      counterLine(kind),
     ],
     commands: [],
   };
@@ -1256,6 +1267,73 @@ canvas.addEventListener("pointermove", (e) => {
   if (e.pointerType !== "mouse" || !selectedBuildingType || !ghost) return;
   const point = rtsCamera.raycastGround(e.clientX, e.clientY);
   if (point) ghost.position.set(point.x, heightAt(point.x, point.z), point.z);
+});
+
+/** A small round badge with an emoji in it, as a cursor — previews what
+ * right-clicking the hovered thing will do (attack, gather a specific
+ * resource), the same way the ghost preview does for building placement.
+ * Cached per icon since the data URI is the same every time it's used. */
+const actionCursorCache = new Map<string, string>();
+function actionCursor(icon: string, ringColor: string): string {
+  const key = `${icon}|${ringColor}`;
+  const cached = actionCursorCache.get(key);
+  if (cached) return cached;
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">` +
+    `<circle cx="14" cy="14" r="12" fill="rgba(20,12,5,0.75)" stroke="${ringColor}" stroke-width="2"/>` +
+    `<text x="14" y="19" font-size="14" text-anchor="middle">${icon}</text>` +
+    `</svg>`;
+  const cursor = `url("data:image/svg+xml,${encodeURIComponent(svg)}") 14 14, pointer`;
+  actionCursorCache.set(key, cursor);
+  return cursor;
+}
+const ATTACK_CURSOR = actionCursor("⚔️", "#ff3b3b");
+const GATHER_CURSOR: Record<ResourceType, string> = {
+  wood: actionCursor(RESOURCE_ICON.wood, "#c9a227"),
+  stone: actionCursor(RESOURCE_ICON.stone, "#c9a227"),
+  food: actionCursor(RESOURCE_ICON.food, "#c9a227"),
+  gold: actionCursor(RESOURCE_ICON.gold, "#c9a227"),
+};
+
+// Desktop only (touch has no hover): preview what right-clicking the
+// hovered thing would do — attack for soldiers, gather-this-resource for
+// villagers-only selections.
+canvas.addEventListener("pointermove", (e) => {
+  if (e.pointerType !== "mouse") return;
+  if (selectedBuildingType) {
+    canvas.style.cursor = "";
+    return;
+  }
+
+  if (selectedSoldiers.length > 0) {
+    const hit = rtsCamera.raycastObjects(e.clientX, e.clientY, [
+      ...enemyCamp.guards.filter((g) => g.alive).map((g) => g.model),
+      ...enemyCamp.villagers.filter((v) => v.alive).map((v) => v.model),
+      ...enemyCamp.townBuildings.list.map((b) => b.mesh),
+    ]);
+    if (hit) {
+      canvas.style.cursor = ATTACK_CURSOR;
+      return;
+    }
+  }
+
+  if (selectedVillagers.length > 0 && selectedSoldiers.length === 0) {
+    const nodeHit = rtsCamera.raycastObjects(
+      e.clientX,
+      e.clientY,
+      resources.nodes.filter((n) => !n.depleted).map((n) => n.mesh),
+    );
+    const node = nodeHit ? resolveResourceNodeFromHit(nodeHit) : null;
+    if (node) {
+      canvas.style.cursor = GATHER_CURSOR[node.type];
+      return;
+    }
+  }
+
+  canvas.style.cursor = "";
+});
+canvas.addEventListener("pointerleave", () => {
+  canvas.style.cursor = "";
 });
 
 // Desktop: left-click selects (villager, building, or deselects on empty
@@ -1621,7 +1699,14 @@ function animate() {
   const minimapPoints: { x: number; z: number; color: string; size?: number }[] = [];
   for (const node of resources.nodes) {
     if (node.depleted) continue;
-    const color = node.type === "wood" ? "#4a7c3f" : node.type === "stone" ? "#9a9086" : "#d6335c";
+    const color =
+      node.type === "wood"
+        ? "#4a7c3f"
+        : node.type === "stone"
+          ? "#9a9086"
+          : node.type === "gold"
+            ? "#e8c34a"
+            : "#d6335c";
     minimapPoints.push({ x: node.position.x, z: node.position.z, color, size: 2 });
   }
   for (const b of townBuildings.list) {

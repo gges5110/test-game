@@ -5,12 +5,14 @@ const RESOURCE_LABEL: Record<ResourceType, string> = {
   wood: "🪵 Wood",
   stone: "🪨 Stone",
   food: "🍞 Food",
+  gold: "🪙 Gold",
 };
 
 export const RESOURCE_ICON: Record<ResourceType, string> = {
   wood: "🪵",
   stone: "🪨",
   food: "🍞",
+  gold: "🪙",
 };
 
 export const BUILDING_ICON: Record<string, string> = {
@@ -769,8 +771,12 @@ export class Hud {
   private renderInventory() {
     const resourceSlots = (Object.keys(RESOURCE_LABEL) as ResourceType[])
       .map(
+        // Gathering trickles in fractionally (rate * frame delta), so the
+        // raw count is rarely a whole number — floor it for display so it
+        // never shows more than what's actually spendable (has()/canBuild
+        // compare against the exact, un-rounded value).
         (type) =>
-          `<div class="slot">${RESOURCE_LABEL[type]}: ${this.inventory.get(type)}</div>`,
+          `<div class="slot">${RESOURCE_LABEL[type]}: ${Math.floor(this.inventory.get(type))}</div>`,
       )
       .join("");
     const popFull = this.population.used >= this.population.cap;

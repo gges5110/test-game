@@ -7,6 +7,7 @@ export class Inventory {
     wood: 0,
     stone: 0,
     food: 0,
+    gold: 0,
   };
   private listeners: Listener[] = [];
 
@@ -34,7 +35,7 @@ export class Inventory {
 
   /** Replaces all state at once (e.g. restoring a save). */
   restore(counts: Partial<Record<ResourceType, number>>) {
-    this.counts = { wood: 0, stone: 0, food: 0, ...counts };
+    this.counts = { wood: 0, stone: 0, food: 0, gold: 0, ...counts };
     this.notify();
   }
 

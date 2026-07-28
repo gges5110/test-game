@@ -78,7 +78,7 @@ export class Crafting {
 
   /** Owning a tool boosts wood/stone yield per gather; Iron Tool supersedes Basic Tool. */
   gatherBonus(type: ResourceType): number {
-    if (type === "food") return 0;
+    if (type !== "wood" && type !== "stone") return 0;
     if (this.countOf("iron_tool") > 0) return 2;
     if (this.countOf("basic_tool") > 0) return 1;
     return 0;

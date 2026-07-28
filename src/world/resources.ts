@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { heightAt } from "./terrain";
+import { partsFor } from "./resourceVisuals";
 
-export type ResourceType = "wood" | "stone" | "food";
+export type ResourceType = "wood" | "stone" | "food" | "gold";
 
 export interface ResourceNode {
   type: ResourceType;
@@ -57,10 +58,24 @@ export const NODE_CAPACITY: Record<ResourceType, number> = {
   wood: 150,
   stone: 200,
   food: 125,
+  gold: 200,
 };
-const NODE_COUNT_PER_TYPE = 140;
 const PLACEMENT_SEED = 9001;
-const CLUSTERS_PER_TYPE = 8;
+/** Gold is deliberately scarcer than the others — fewer clusters, fewer
+ * nodes per cluster, matching its usual "precious" role even though nothing
+ * costs it yet. */
+const NODE_COUNT_PER_TYPE: Record<ResourceType, number> = {
+  wood: 140,
+  stone: 140,
+  food: 140,
+  gold: 70,
+};
+const CLUSTERS_PER_TYPE: Record<ResourceType, number> = {
+  wood: 8,
+  stone: 8,
+  food: 8,
+  gold: 5,
+};
 const CLUSTER_RADIUS = 12;
 const MIN_CLUSTER_DIST_FROM_SPAWN = 12;
 const MAX_CLUSTER_DIST_FROM_SPAWN = 42;
@@ -70,6 +85,7 @@ const PICK_RADIUS: Record<ResourceType, number> = {
   wood: 1,
   stone: 0.55,
   food: 0.55,
+  gold: 0.55,
 };
 
 function mulberry32(seed: number) {
@@ -81,105 +97,6 @@ function mulberry32(seed: number) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-/** A part appears once (or a few fixed times) per node of its type, always at
- * the same local offset — trees, rocks and bushes are procedural but not
- * randomized per-instance, so one InstancedMesh per part can stand in for
- * every node of that type instead of a unique Mesh each. */
-interface PartTemplate {
-  geometry: THREE.BufferGeometry;
-  material: THREE.Material;
-  /** Local offsets relative to the node origin — one entry per repetition
-   * of this part within a single node (e.g. a bush has several lumps). */
-  locals: THREE.Matrix4[];
-}
-
-function localMatrix(
-  x: number,
-  y: number,
-  z: number,
-  scaleY = 1,
-): THREE.Matrix4 {
-  return new THREE.Matrix4().compose(
-    new THREE.Vector3(x, y, z),
-    new THREE.Quaternion(),
-    new THREE.Vector3(1, scaleY, 1),
-  );
-}
-
-function treeParts(): PartTemplate[] {
-  return [
-    {
-      geometry: new THREE.CylinderGeometry(0.15, 0.2, 1.4, 6),
-      material: new THREE.MeshStandardMaterial({ color: 0x5c4326 }),
-      locals: [localMatrix(0, 0.7, 0)],
-    },
-    {
-      geometry: new THREE.ConeGeometry(0.9, 1.8, 8),
-      material: new THREE.MeshStandardMaterial({ color: 0x2f6b3a }),
-      locals: [localMatrix(0, 2.1, 0)],
-    },
-  ];
-}
-
-function rockParts(): PartTemplate[] {
-  return [
-    {
-      geometry: new THREE.DodecahedronGeometry(0.5, 0),
-      material: new THREE.MeshStandardMaterial({ color: 0x8a8378 }),
-      locals: [localMatrix(0, 0.35, 0)],
-    },
-  ];
-}
-
-/** Several overlapping lumps read as a fuller bush than one sphere; bright
- * berries dotted across the foliage make it read as "food" at a glance. */
-function bushParts(): PartTemplate[] {
-  const lumpSpots: [number, number, number, number][] = [
-    [0, 0.32, 0, 0.42],
-    [0.28, 0.24, 0.1, 0.3],
-    [-0.26, 0.22, -0.14, 0.28],
-    [0.05, 0.24, -0.28, 0.27],
-  ];
-  const berrySpots: [number, number, number][] = [
-    [0.15, 0.5, 0.18],
-    [-0.18, 0.46, 0.08],
-    [0.32, 0.36, -0.05],
-    [-0.3, 0.34, -0.2],
-    [0.02, 0.4, -0.32],
-    [0.1, 0.3, 0.3],
-  ];
-  return [
-    {
-      // All lumps share one radius-0.42 sphere geometry scaled per-instance
-      // via the matrix, so differing lump sizes don't need separate geometries.
-      geometry: new THREE.SphereGeometry(1, 8, 6),
-      material: new THREE.MeshStandardMaterial({ color: 0x4a7c3f }),
-      // Bake each lump's radius and the shared vertical squash (0.75) into
-      // its instance scale, since they all share one unit-radius geometry.
-      locals: lumpSpots.map(([x, y, z, radius]) =>
-        localMatrix(x, y, z).multiply(
-          new THREE.Matrix4().makeScale(radius, radius * 0.75, radius),
-        ),
-      ),
-    },
-    {
-      geometry: new THREE.SphereGeometry(0.06, 6, 6),
-      material: new THREE.MeshStandardMaterial({
-        color: 0xd6335c,
-        emissive: 0x8a0f2c,
-        emissiveIntensity: 0.3,
-      }),
-      locals: berrySpots.map(([x, y, z]) => localMatrix(x, y, z)),
-    },
-  ];
-}
-
-function partsFor(type: ResourceType): PartTemplate[] {
-  if (type === "wood") return treeParts();
-  if (type === "stone") return rockParts();
-  return bushParts();
 }
 
 /** One instance slot within one part's InstancedMesh, bound to a node. */
@@ -211,18 +128,19 @@ export class ResourceManager {
 
   private placeNodes(bases: THREE.Vector3[]) {
     const rng = mulberry32(PLACEMENT_SEED);
-    const types: ResourceType[] = ["wood", "stone", "food"];
-    const clustersPerBase = Math.max(1, Math.round(CLUSTERS_PER_TYPE / bases.length));
-    const nodesPerBase = Math.round(NODE_COUNT_PER_TYPE / bases.length);
+    const types: ResourceType[] = ["wood", "stone", "food", "gold"];
 
     // Positions first, so each type's InstancedMeshes can be sized exactly.
     const positionsByType: Record<ResourceType, THREE.Vector3[]> = {
       wood: [],
       stone: [],
       food: [],
+      gold: [],
     };
 
     for (const type of types) {
+      const clustersPerBase = Math.max(1, Math.round(CLUSTERS_PER_TYPE[type] / bases.length));
+      const nodesPerBase = Math.round(NODE_COUNT_PER_TYPE[type] / bases.length);
       const nodesPerCluster = Math.ceil(nodesPerBase / clustersPerBase);
 
       for (const base of bases) {

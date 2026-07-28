@@ -173,7 +173,7 @@ export const BUILDINGS: BuildingDef[] = [
     id: "castle",
     name: "Castle",
     cost: { stone: 22 },
-    description: "Your strongest structure — stone-only, huge HP, heavy attack. Villagers can garrison inside for safety.",
+    description: "Your strongest structure — stone-only, huge HP, heavy attack, and trains Soldiers. Villagers can garrison inside for safety.",
     maxHp: 300,
     buildTime: 40,
     requiresTownCenter: true,
@@ -182,6 +182,7 @@ export const BUILDINGS: BuildingDef[] = [
     attackOriginY: 3.2,
     garrisonCapacity: 15,
     obstacleRadius: 1.8,
+    trains: { unit: "soldier", foodCost: 5, time: 12 },
   },
 ];
 

@@ -4,6 +4,12 @@ import type { DropOffFinder, GatherSource, ResourceNode, ResourceType } from "./
 import type { Inventory } from "../systems/inventory";
 import type { Combatant } from "./combatant";
 import { createHealthBar, type HealthBar } from "./healthBar";
+import {
+  createSelectionRing,
+  createVillagerModel,
+  createWorkIndicator,
+  createCarryIndicator,
+} from "./unitVisuals";
 
 /** Unarmed — soft compared to a Soldier's lowest (Archer at 40), so a raid
  * that reaches your economy is genuinely costly, not just cosmetic. */
@@ -15,6 +21,7 @@ const CARRY_COLOR: Record<ResourceType, number> = {
   wood: 0x4a7c3f,
   stone: 0x9a9086,
   food: 0xd6335c,
+  gold: 0xe8c34a,
 };
 
 const WANDER_RADIUS = 4;
@@ -459,55 +466,4 @@ export class Villager implements Combatant {
     this.wanderTarget.set(x, heightAt(x, z), z);
     this.wanderWaitUntil = now + 2 + Math.random() * 3;
   }
-}
-
-function createWorkIndicator(): THREE.Mesh {
-  return new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.14, 0),
-    new THREE.MeshStandardMaterial({
-      color: 0xffd23f,
-      emissive: 0xffaa00,
-      emissiveIntensity: 1.2,
-    }),
-  );
-}
-
-/** A small bundle worn on the villager's back, shown only while returning
- * with a resource — color set per-type in updateGathering(). */
-function createCarryIndicator(): THREE.Mesh {
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(0.24, 0.22, 0.2),
-    new THREE.MeshStandardMaterial({ color: 0xffffff }),
-  );
-  mesh.position.set(0, 0.95, -0.24);
-  mesh.castShadow = true;
-  return mesh;
-}
-
-function createSelectionRing(): THREE.Mesh {
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.4, 0.5, 24),
-    new THREE.MeshBasicMaterial({ color: 0x6fe3ff, side: THREE.DoubleSide }),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.05;
-  return ring;
-}
-
-function createVillagerModel(): THREE.Group {
-  const group = new THREE.Group();
-  const skin = new THREE.MeshStandardMaterial({ color: 0xd8a888 });
-  const tunic = new THREE.MeshStandardMaterial({ color: 0x8a6a3a });
-
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.5, 4, 8), tunic);
-  body.position.y = 0.75;
-  body.castShadow = true;
-  group.add(body);
-
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 10), skin);
-  head.position.y = 1.28;
-  head.castShadow = true;
-  group.add(head);
-
-  return group;
 }

@@ -52,7 +52,7 @@ export const BUILDINGS: BuildingDef[] = [
     requiresTownCenter: true,
     dropOff: "any",
     trains: { unit: "villager", foodCost: 3, time: 8 },
-    garrisonCapacity: 10,
+    garrisonCapacity: 15,
     garrisonAttack: { range: 8, damagePerVillager: 3, cooldown: 1.5 },
     attackOriginY: 2.4,
   },

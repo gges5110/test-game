@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import Stats from "stats.js";
 import { createWorld, heightAt, WORLD_SIZE, ENEMY_CAMP_XZ, isWater } from "./world/terrain";
-import { ResourceManager, type ResourceType } from "./world/resources";
+import { ResourceManager, NODE_CAPACITY, type ResourceType, type ResourceNode } from "./world/resources";
 import {
   createBuildingMesh,
   makeGhost,
@@ -293,6 +293,8 @@ let selectedSoldiers: Soldier[] = [];
 /** A single enemy guard or villager, view-only — no commands, and never more
  * than one (a box-drag never picks these up; only a direct click does). */
 let selectedEnemyUnit: EnemyGuard | Villager | null = null;
+/** A single resource node, view-only — just to see how much is left. */
+let selectedResourceNode: ResourceNode | null = null;
 
 /** Tracks the last unit clicked (desktop only) so a second click on the same
  * unit within the window reads as a double-click rather than two selects. */
@@ -326,6 +328,7 @@ function syncSelectionOutline() {
 function selectUnits(villagerList: Villager[], soldierList: Soldier[]) {
   deselectBuilding();
   deselectEnemyUnit();
+  deselectResourceNode();
   for (const v of selectedVillagers) v.setSelected(false);
   for (const s of selectedSoldiers) s.setSelected(false);
   selectedVillagers = villagerList;
@@ -347,6 +350,7 @@ function selectBuilding(building: PlacedBuilding) {
   deselectUnits();
   deselectBuilding();
   deselectEnemyUnit();
+  deselectResourceNode();
   selectedBuildingInfo = building;
   const ring = building.mesh.userData.selectionRing as THREE.Mesh | undefined;
   if (ring) ring.visible = true;
@@ -371,6 +375,7 @@ function deselectBuilding() {
 function selectEnemyUnit(unit: EnemyGuard | Villager) {
   deselectUnits();
   deselectBuilding();
+  deselectResourceNode();
   selectedEnemyUnit = unit;
   syncSelectionOutline();
 }
@@ -380,10 +385,25 @@ function deselectEnemyUnit() {
   syncSelectionOutline();
 }
 
+/** Read-only look at a resource node — just to see how much is left. */
+function selectResourceNode(node: ResourceNode) {
+  deselectUnits();
+  deselectBuilding();
+  deselectEnemyUnit();
+  selectedResourceNode = node;
+  updateResourceRing();
+}
+
+function deselectResourceNode() {
+  selectedResourceNode = null;
+  updateResourceRing();
+}
+
 function deselectAll() {
   deselectUnits();
   deselectBuilding();
   deselectEnemyUnit();
+  deselectResourceNode();
 }
 
 /** A small flag-on-a-pole shown at a training building's rally point while
@@ -429,6 +449,70 @@ function setRallyPoint(building: PlacedBuilding, sx: number, sy: number) {
   updateRallyMarker();
 }
 
+/** A ground ring shown at a selected resource node — created lazily since
+ * most sessions won't inspect one. */
+let resourceRing: THREE.Mesh | null = null;
+function ensureResourceRing(): THREE.Mesh {
+  if (resourceRing) return resourceRing;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.6, 0.75, 24),
+    new THREE.MeshBasicMaterial({ color: 0xffd23f, side: THREE.DoubleSide }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.visible = false;
+  scene.add(ring);
+  resourceRing = ring;
+  return ring;
+}
+
+/** Shows the attack radius of a selected building that can auto-attack —
+ * Outposts/Castles always, a Town Center only once it's finished (a
+ * garrisoned TC's attack still has a fixed range regardless of occupancy). */
+let rangeRing: THREE.Mesh | null = null;
+function ensureRangeRing(): THREE.Mesh {
+  if (rangeRing) return rangeRing;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.97, 1, 64),
+    new THREE.MeshBasicMaterial({
+      color: 0xff5555,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.55,
+    }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.visible = false;
+  scene.add(ring);
+  rangeRing = ring;
+  return ring;
+}
+
+function updateRangeRing() {
+  const ring = ensureRangeRing();
+  const building = selectedBuildingInfo;
+  const range =
+    building && !building.underConstruction
+      ? (building.def.attack ?? building.def.garrisonAttack)?.range
+      : undefined;
+  ring.visible = !!range;
+  if (range && building) {
+    ring.scale.set(range, range, 1);
+    ring.position.set(building.position.x, building.position.y + 0.05, building.position.z);
+  }
+}
+
+function updateResourceRing() {
+  const ring = ensureResourceRing();
+  ring.visible = !!selectedResourceNode;
+  if (selectedResourceNode) {
+    ring.position.set(
+      selectedResourceNode.position.x,
+      selectedResourceNode.position.y + 0.05,
+      selectedResourceNode.position.z,
+    );
+  }
+}
+
 function resolveVillagerFromHit(hit: THREE.Object3D): Villager | null {
   let obj: THREE.Object3D | null = hit;
   while (obj) {
@@ -466,10 +550,10 @@ function resolveEnemyBuildingFromHit(hit: THREE.Object3D): PlacedBuilding | null
   return null;
 }
 
-function resolveResourceNodeFromHit(hit: THREE.Object3D) {
+function resolveResourceNodeFromHit(hit: THREE.Object3D): ResourceNode | null {
   let obj: THREE.Object3D | null = hit;
   while (obj) {
-    if (obj.userData.resourceNode) return obj.userData.resourceNode;
+    if (obj.userData.resourceNode) return obj.userData.resourceNode as ResourceNode;
     obj = obj.parent;
   }
   return null;
@@ -682,6 +766,23 @@ function buildingCommands(building: PlacedBuilding): CommandButton[] {
 }
 
 function buildSelectionInfo(): SelectionInfo | null {
+  if (selectedResourceNode) {
+    const node = selectedResourceNode;
+    const max = NODE_CAPACITY[node.type];
+    const label = node.type[0].toUpperCase() + node.type.slice(1);
+    return {
+      key: node,
+      title: `${label} Node`,
+      portrait: RESOURCE_ICON[node.type],
+      description:
+        "A gatherable resource node — right-click it with villagers selected to send them gathering.",
+      hp: node.amount,
+      maxHp: max,
+      stats: [["📦 Remaining", `${Math.ceil(node.amount)}/${max}`]],
+      commands: [],
+    };
+  }
+
   if (selectedEnemyUnit) {
     const unit = selectedEnemyUnit;
     if (unit instanceof EnemyGuard) {
@@ -1231,6 +1332,20 @@ rtsCamera.setOnTap((sx, sy, button, isTouch) => {
     }
   }
 
+  // Resource nodes are view-only — just a way to check how much is left.
+  const resourceNodeHit = rtsCamera.raycastObjects(
+    sx,
+    sy,
+    resources.nodes.filter((n) => !n.depleted).map((n) => n.mesh),
+  );
+  if (resourceNodeHit) {
+    const node = resolveResourceNodeFromHit(resourceNodeHit);
+    if (node) {
+      selectResourceNode(node);
+      return;
+    }
+  }
+
   // Enemy units are view-only: a click selects at most one, purely to show
   // its attributes — never a group, and never actionable.
   const enemyGuardHit = rtsCamera.raycastObjects(
@@ -1427,6 +1542,9 @@ function animate() {
   if (selectedEnemyUnit && !selectedEnemyUnit.alive) {
     deselectEnemyUnit();
   }
+  if (selectedResourceNode && selectedResourceNode.depleted) {
+    deselectResourceNode();
+  }
 
   const hasPopRoom = populationUsed() < populationCap();
   for (const building of townBuildings.list) {
@@ -1525,6 +1643,7 @@ function animate() {
   }
   hud.setPrompt(placementPrompt);
   hud.setSelectionInfo(buildSelectionInfo());
+  updateRangeRing();
 
   if (!defeated && townBuildings.list.length === 0 && villagers.length === 0 && soldiers.length === 0) {
     defeated = true;

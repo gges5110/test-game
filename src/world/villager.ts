@@ -21,7 +21,12 @@ const WANDER_RADIUS = 4;
 const JOB_SEARCH_RADIUS = 25;
 const SPEED = 1.6;
 const ARRIVE_DIST = 0.3;
-const GATHER_DURATION = 1.2;
+/** Units per second pulled from whatever node is being worked — AoE2-style
+ * continuous gathering instead of "stand still, then get the whole node". */
+const GATHER_RATE = 2;
+/** How much a villager hauls per trip before heading to a drop-off, even if
+ * the node isn't exhausted yet — AoE2's per-trip carry cap. */
+const CARRY_CAPACITY = 10;
 const BUILD_RANGE = 1.8;
 
 type State =
@@ -70,8 +75,10 @@ export class Villager implements Combatant {
   private state: State = "idle";
   private targetNode: ResourceNode | null = null;
   private buildSite: ConstructionSite | null = null;
-  private gatherEndsAt = 0;
   private carrying: ResourceType | null = null;
+  /** How much of `carrying` has been extracted this trip, up to
+   * CARRY_CAPACITY, not yet delivered to a drop-off. */
+  private carryAmount = 0;
   /** Sticky job filter set by the player (e.g. "gather food") — once set, the
    * villager only picks up nodes of this type when idle, instead of whatever
    * is nearest, until explicitly moved or reassigned. */
@@ -224,10 +231,10 @@ export class Villager implements Combatant {
         this.updateBuilding(delta, now);
         break;
       case "toResource":
-        this.updateToResource(delta, now);
+        this.updateToResource(delta);
         break;
       case "gathering":
-        this.updateGathering(now);
+        this.updateGathering(delta, now);
         break;
       case "toHome":
         this.updateToHome(delta);
@@ -321,7 +328,7 @@ export class Villager implements Combatant {
     }
   }
 
-  private updateToResource(delta: number, now: number) {
+  private updateToResource(delta: number) {
     if (!this.targetNode || this.targetNode.depleted) {
       this.abandonJob();
       return;
@@ -329,37 +336,54 @@ export class Villager implements Combatant {
     this.moveToward(this.targetNode.position, delta);
     if (this.model.position.distanceTo(this.targetNode.position) <= ARRIVE_DIST) {
       this.state = "gathering";
-      this.gatherEndsAt = now + GATHER_DURATION;
     }
   }
 
-  private updateGathering(now: number) {
+  private updateGathering(delta: number, now: number) {
     this.workIndicator.position.y = 1.55 + Math.sin(now * 9) * 0.1;
     this.workIndicator.rotation.y = now * 4;
 
-    if (now < this.gatherEndsAt) return;
-    if (this.targetNode && !this.targetNode.depleted) {
-      this.carrying = this.resources.gather(this.targetNode);
-      const material = this.carryIndicator.material as THREE.MeshStandardMaterial;
-      material.color.setHex(CARRY_COLOR[this.carrying]);
+    const node = this.targetNode;
+    if (!node) {
+      this.state = "idle";
+      return;
     }
-    this.targetNode = null;
-    this.dropTarget = this.carrying
-      ? (this.dropOffFinder.nearestDropOff(this.carrying, this.model.position) ?? this.home)
-      : this.home;
-    this.state = "toHome";
+
+    this.carrying = node.type;
+    const material = this.carryIndicator.material as THREE.MeshStandardMaterial;
+    material.color.setHex(CARRY_COLOR[node.type]);
+
+    const want = Math.min(GATHER_RATE * delta, CARRY_CAPACITY - this.carryAmount);
+    this.carryAmount += this.resources.extract(node, want);
+
+    if (this.carryAmount >= CARRY_CAPACITY - 1e-6 || node.depleted) {
+      this.dropTarget = this.dropOffFinder.nearestDropOff(node.type, this.model.position) ?? this.home;
+      this.state = "toHome";
+    }
   }
 
   private updateToHome(delta: number) {
     const target = this.dropTarget ?? this.home;
     this.moveToward(target, delta);
-    if (this.model.position.distanceTo(target) <= ARRIVE_DIST) {
-      if (this.carrying) {
+    // The target is a building's center, not its doorway — stop at the
+    // footprint's edge (same reach used to approach a construction site)
+    // instead of walking inside the building to deliver the load.
+    if (this.model.position.distanceTo(target) <= BUILD_RANGE) {
+      if (this.carrying && this.carryAmount > 0) {
         const bonus = this.getGatherBonus(this.carrying);
-        this.inventory.add(this.carrying, 1 + bonus);
-        this.carrying = null;
+        this.inventory.add(this.carrying, this.carryAmount + bonus);
       }
-      this.state = "idle";
+      this.carrying = null;
+      this.carryAmount = 0;
+      // The node isn't gone, just this trip — head back for another load
+      // instead of hunting for a fresh one, same as AoE2's shuttle run.
+      if (this.targetNode && !this.targetNode.depleted) {
+        this.state = "toResource";
+      } else {
+        if (this.targetNode) this.resources.release(this.targetNode);
+        this.targetNode = null;
+        this.state = "idle";
+      }
     }
   }
 
@@ -393,6 +417,11 @@ export class Villager implements Combatant {
     if (this.targetNode) this.resources.release(this.targetNode);
     this.targetNode = null;
     this.buildSite = null;
+    // Any in-progress trip is abandoned along with the job — a reassigned
+    // villager doesn't materialize a partial, undelivered load out of thin
+    // air once it starts working a different node.
+    this.carrying = null;
+    this.carryAmount = 0;
     if (this.state === "garrisoned") {
       this.garrisonSite?.release(this);
       this.model.visible = true;

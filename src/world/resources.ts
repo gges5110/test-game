@@ -13,6 +13,9 @@ export interface ResourceNode {
   respawnAt: number;
   /** Claimed by a villager en route, so others don't also target it. */
   reserved: boolean;
+  /** Remaining stock — AoE2-style, a node holds many trips' worth and gets
+   * ground down over time rather than vanishing after one visit. */
+  amount: number;
 }
 
 /**
@@ -30,7 +33,10 @@ export interface GatherSource {
   ): ResourceNode | null;
   reserve(node: ResourceNode): void;
   release(node: ResourceNode): void;
-  gather(node: ResourceNode): ResourceType;
+  /** Pulls up to `amount` out of a node's remaining stock, at whatever rate
+   * the caller is gathering at. Returns how much was actually taken (capped
+   * by what's left), and depletes/hides the node once it hits zero. */
+  extract(node: ResourceNode, amount: number): number;
   /** Ticks respawn timers; called once per frame. */
   update(): void;
 }
@@ -44,6 +50,14 @@ export interface DropOffFinder {
 
 const GATHER_RANGE = 2.5;
 const RESPAWN_SECONDS = 20;
+/** Total stock a single node holds before it's exhausted — AoE2-scale, not
+ * the old "one visit and it's gone." A villager gathers at GATHER_RATE
+ * (see villager.ts) per second, so a stone node takes a while to work down. */
+export const NODE_CAPACITY: Record<ResourceType, number> = {
+  wood: 150,
+  stone: 200,
+  food: 125,
+};
 const NODE_COUNT_PER_TYPE = 140;
 const PLACEMENT_SEED = 9001;
 const CLUSTERS_PER_TYPE = 8;
@@ -307,6 +321,7 @@ export class ResourceManager {
         depleted: false,
         respawnAt: 0,
         reserved: false,
+        amount: NODE_CAPACITY[type],
       };
       pickMesh.userData.resourceNode = node;
       this.nodes.push(node);
@@ -365,6 +380,7 @@ export class ResourceManager {
       depleted: false,
       respawnAt: 0,
       reserved: false,
+      amount: NODE_CAPACITY[type],
     };
     pickMesh.userData.resourceNode = node;
     this.nodes.push(node);
@@ -385,12 +401,16 @@ export class ResourceManager {
     node.reserved = false;
   }
 
-  gather(node: ResourceNode): ResourceType {
-    node.depleted = true;
-    node.reserved = false;
-    node.respawnAt = performance.now() / 1000 + RESPAWN_SECONDS;
-    this.setInstancesVisible(node, false);
-    return node.type;
+  extract(node: ResourceNode, amount: number): number {
+    const taken = Math.min(amount, node.amount);
+    node.amount -= taken;
+    if (node.amount <= 0 && !node.depleted) {
+      node.depleted = true;
+      node.reserved = false;
+      node.respawnAt = performance.now() / 1000 + RESPAWN_SECONDS;
+      this.setInstancesVisible(node, false);
+    }
+    return taken;
   }
 
   update() {
@@ -398,6 +418,7 @@ export class ResourceManager {
     for (const node of this.nodes) {
       if (node.depleted && now >= node.respawnAt) {
         node.depleted = false;
+        node.amount = NODE_CAPACITY[node.type];
         this.setInstancesVisible(node, true);
       }
     }
